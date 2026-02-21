@@ -1,16 +1,47 @@
 import os
 import telebot
+import requests
+from bs4 import BeautifulSoup
 from flask import Flask, request
 
-# تنظیمات اولیه
+# تنظیمات اولیه از Environment Variables
 TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_ID = 6690559792  # آیدی عددی شما
+ADMIN_ID = 6690559792 
 CHANNEL_ID = "@banehstoore"
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- بخش عمومی (برای همه کاربران) ---
+# --- توابع کمکی (استخراج اطلاعات) ---
+
+def extract_product_info(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        title = soup.find('h1').text.strip() if soup.find('h1') else "بدون نام"
+        price = "نامشخص"
+        price_tag = soup.select_one('.price ins .woocommerce-Price-amount')
+        if price_tag:
+            price = price_tag.text.strip()
+            
+        image_tag = soup.select_one('.woocommerce-product-gallery__image img')
+        image_url = image_tag['src'] if image_tag else None
+        
+        return {"title": title, "price": price, "image": image_url, "url": url}
+    except Exception as e:
+        print(f"Error extracting: {e}")
+        return None
+
+def send_to_channel(data):
+    caption = f"🌟 {data['title']}\n\n💰 قیمت: {data['price']}\n\n🔗 لینک خرید:\n{data['url']}\n\n🆔 {CHANNEL_ID}"
+    if data['image']:
+        bot.send_photo(CHANNEL_ID, data['image'], caption=caption)
+    else:
+        bot.send_message(CHANNEL_ID, caption)
+
+# --- بخش مدیریت پیام‌ها ---
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(m):
@@ -21,31 +52,29 @@ def send_welcome(m):
     )
     bot.reply_to(m, welcome_text)
 
-# --- بخش اختصاصی ادمین (فقط برای شما) ---
-
 @bot.message_handler(func=lambda m: True)
 def handle_messages(m):
-    # چک کردن اینکه آیا کاربر ادمین است یا خیر
+    # چک کردن ادمین
     if m.from_user.id == ADMIN_ID:
         if "banehservice.com" in m.text:
-            sent_msg = bot.reply_to(m, "ادمین گرامی، در حال استخراج و ارسال محصول به کانال... ⏳")
+            sent_msg = bot.reply_to(m, "ادمین گرامی، در حال استخراج و ارسال به کانال... ⏳")
             
-            # در اینجا توابع استخراج شما (که قبلاً داشتید) فراخوانی می‌شوند
-            # فرض بر این است که توابع extract_product_info و send_to_channel در کد شما وجود دارند
-            try:
-                # product_data = extract_product_info(m.text) 
-                # send_to_channel(product_data)
-                bot.edit_message_text("✅ محصول با موفقیت در کانال منتشر شد.", m.chat.id, sent_msg.message_id)
-            except Exception as e:
-                bot.edit_message_text(f"❌ خطایی رخ داد: {e}", m.chat.id, sent_msg.message_id)
+            product_data = extract_product_info(m.text)
+            if product_data:
+                try:
+                    send_to_channel(product_data)
+                    bot.edit_message_text("✅ محصول با موفقیت در کانال منتشر شد.", m.chat.id, sent_msg.message_id)
+                except Exception as e:
+                    bot.edit_message_text(f"❌ خطا در ارسال به کانال: {e}", m.chat.id, sent_msg.message_id)
+            else:
+                bot.edit_message_text("❌ خطا در استخراج اطلاعات از سایت.", m.chat.id, sent_msg.message_id)
         else:
-            bot.reply_to(m, "پیام شما دریافت شد ادمین عزیز، اما لینک معتبری یافت نشد.")
-    
+            bot.reply_to(m, "ادمین عزیز، برای انتشار محصول لطفاً لینک سایت بانه سرویس را بفرستید.")
     else:
-        # پاسخ به کاربران عادی که لینک می‌فرستند
+        # پاسخ به کاربران عادی
         bot.reply_to(m, "عذرخواهی می‌کنم، ارسال محصول به کانال فقط توسط مدیریت انجام می‌شود. 🙏")
 
-# --- بخش تنظیمات سرور (Webhook) ---
+# --- تنظیمات Webhook و Flask ---
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -54,8 +83,7 @@ def webhook():
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
         return ''
-    else:
-        return 'Error', 403
+    return 'Error', 403
 
 @app.route('/')
 def index():
