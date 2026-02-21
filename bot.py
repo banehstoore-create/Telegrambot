@@ -10,12 +10,10 @@ from telebot import types
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 6690559792 
 CHANNEL_ID = "@banehstoore"
-ADMIN_PV = "https://t.me/banehstooreir" # لینک پی‌وی خودتان را اینجا اصلاح کنید
+ADMIN_PV = "https://t.me/banehstoore_admin" 
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
-
-# --- توابع استخراج اطلاعات ---
 
 def extract_product_info(url):
     try:
@@ -39,9 +37,11 @@ def extract_product_info(url):
                         
                         offers = item.get('offers', {})
                         price = offers.get('price')
-                        # فرمت قیمت به تومان با جداکننده
+                        
+                        # --- اصلاح قیمت (تبدیل ریال به تومان) ---
                         if price and str(price).isdigit():
-                            product_data['price'] = f"{int(price):,}" + " تومان"
+                            toman_price = int(price) // 10  # حذف یک صفر برای تبدیل به تومان
+                            product_data['price'] = f"{toman_price:,}" + " تومان"
                         else:
                             product_data['price'] = "تماس بگیرید"
                         
@@ -61,11 +61,10 @@ def extract_product_info(url):
 
         product_data['url'] = url
         return product_data
-    except Exception as e:
+    except Exception:
         return None
 
 def send_to_channel(data):
-    # کپشن بدون لینک (لینک در دکمه قرار می‌گیرد)
     caption = (
         f"🛍 **{data['title']}**\n\n"
         f"💰 قیمت: {data['price']}\n"
@@ -74,53 +73,45 @@ def send_to_channel(data):
         f"🆔 {CHANNEL_ID}"
     )
     
-    # ساخت دکمه‌های شیشه‌ای زیر پست کانال
     markup = types.InlineKeyboardMarkup()
-    btn_site = types.InlineKeyboardButton("🔗 مشاهده در سایت", url=data['url'])
-    btn_order = types.InlineKeyboardButton("🛒 ثبت سفارش (مشاوره)", url=ADMIN_PV)
-    markup.add(btn_site)
-    markup.add(btn_order)
+    markup.add(types.InlineKeyboardButton("🔗 مشاهده در سایت", url=data['url']))
+    markup.add(types.InlineKeyboardButton("🛒 ثبت سفارش (مشاوره)", url=ADMIN_PV))
     
     if data['image']:
         bot.send_photo(CHANNEL_ID, data['image'], caption=caption, parse_mode='Markdown', reply_markup=markup)
     else:
         bot.send_message(CHANNEL_ID, caption, parse_mode='Markdown', reply_markup=markup)
 
-# --- بخش مدیریت پیام‌ها ---
-
 @bot.message_handler(commands=['start'])
 def send_welcome(m):
     if m.from_user.id == ADMIN_ID:
-        # منوی دکمه‌ای برای ادمین
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add(types.KeyboardButton("➕ افزودن محصول جدید"))
-        bot.send_message(m.chat.id, "خوش آمدید ادمین عزیز. برای شروع انتخاب کنید:", reply_markup=markup)
+        bot.send_message(m.chat.id, "ادمین عزیز خوش آمدید. گزینه مورد نظر را انتخاب کنید:", reply_markup=markup)
     else:
-        bot.send_message(m.chat.id, f"سلام! برای مشاهده محصولات به کانال ما بپیوندید:\n{CHANNEL_ID}")
+        bot.send_message(m.chat.id, f"سلام! برای خرید به کانال ما بپیوندید:\n{CHANNEL_ID}")
 
 @bot.message_handler(func=lambda m: m.text == "➕ افزودن محصول جدید")
 def ask_for_link(m):
     if m.from_user.id == ADMIN_ID:
-        bot.send_message(m.chat.id, "لطفاً لینک محصول مورد نظر را ارسال کنید:")
+        bot.send_message(m.chat.id, "لطفاً لینک محصول را از سایت کپی کرده و اینجا بفرستید:")
 
 @bot.message_handler(func=lambda m: True)
 def handle_all_messages(m):
     if m.from_user.id == ADMIN_ID:
         if "http" in m.text:
-            sent_msg = bot.reply_to(m, "⏳ در حال پردازش و ارسال به کانال...")
+            sent_msg = bot.reply_to(m, "⏳ در حال استخراج اطلاعات و تبدیل قیمت...")
             product_data = extract_product_info(m.text)
             if product_data:
                 try:
                     send_to_channel(product_data)
-                    bot.edit_message_text("✅ محصول با موفقیت در کانال منتشر شد.", m.chat.id, sent_msg.message_id)
+                    bot.edit_message_text("✅ محصول با موفقیت و قیمت اصلاح شده ارسال شد.", m.chat.id, sent_msg.message_id)
                 except Exception as e:
-                    bot.edit_message_text(f"❌ خطا در ارسال: {e}", m.chat.id, sent_msg.message_id)
+                    bot.edit_message_text(f"❌ خطا در ارسال به کانال: {e}", m.chat.id, sent_msg.message_id)
             else:
-                bot.edit_message_text("❌ خطا در استخراج! مطمئن شوید لینک محصول درست است.", m.chat.id, sent_msg.message_id)
+                bot.edit_message_text("❌ خطا در استخراج! لطفاً لینک را بررسی کنید.", m.chat.id, sent_msg.message_id)
     else:
-        bot.reply_to(m, "🙏 دسترسی محدود است.")
-
-# --- تنظیمات سرور ---
+        bot.reply_to(m, "🙏 دسترسی محدود به مدیریت.")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -133,7 +124,7 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Bot is Active!"
+    return "BanehStoore Bot is Active!"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
