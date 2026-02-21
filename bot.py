@@ -15,7 +15,7 @@ CHANNEL_ID = "@banehstoore"
 ADMIN_PV = "https://t.me/banehstoore_admin"
 
 bot = telebot.TeleBot(TOKEN)
-# فعال‌سازی Next Step برای کارکرد صحیح در حالت Webhook
+# برای کارکرد صحیح ثبت‌نام در حالت Webhook
 bot.enable_save_next_step_handlers(delay=2)
 bot.load_next_step_handlers()
 
@@ -23,7 +23,7 @@ app = Flask(__name__)
 
 # --- مدیریت دیتابیس (Neon) ---
 def get_db_connection():
-    # Neon لینک‌ها را با postgres:// می‌دهد، اما psycopg2 گاهی نیاز به postgresql:// دارد
+    # اصلاح پروتکل برای سازگاری با پایتون
     url = DATABASE_URL
     if url and url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
@@ -43,25 +43,71 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
+        print("Database initialized successfully.")
     except Exception as e:
-        print(f"DB Init Error: {e}")
+        print(f"Database Init Error: {e}")
 
+# اجرای اولیه برای ساخت جدول
 if DATABASE_URL:
     init_db()
 
-# --- هندلرهای تلگرام ---
+# --- توابع استخراج اطلاعات محصول (Mixin) ---
+def extract_product_info(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        product_data = {}
+        json_ld_tags = soup.find_all('script', type='application/ld+json')
+        
+        for tag in json_ld_tags:
+            try:
+                data = json.loads(tag.text)
+                items = data if isinstance(data, list) else [data]
+                for item in items:
+                    if item.get('@type') == 'Product':
+                        product_data['title'] = item.get('name')
+                        img = item.get('image')
+                        product_data['image'] = img[0] if isinstance(img, list) else img
+                        
+                        offers = item.get('offers', {})
+                        price = offers.get('price')
+                        if price and str(price).isdigit():
+                            product_data['price'] = f"{int(price)//10:,} تومان"
+                        else:
+                            product_data['price'] = "تماس بگیرید"
+                        
+                        av = offers.get('availability', '')
+                        product_data['status'] = "✅ موجود" if 'InStock' in av or 'موجود' in av else "❌ ناموجود"
+                        product_data['url'] = url
+                        return product_data
+            except: continue
+        return None
+    except: return None
+
+def send_to_channel(data):
+    caption = f"🛍 **{data['title']}**\n\n💰 قیمت: {data['price']}\n📦 وضعیت: {data['status']}\n\n🏁 بانه استور\n🆔 {CHANNEL_ID}"
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔗 مشاهده در سایت", url=data['url']))
+    markup.add(types.InlineKeyboardButton("🛒 ثبت سفارش", url=ADMIN_PV))
+    
+    if data.get('image'):
+        bot.send_photo(CHANNEL_ID, data['image'], caption=caption, parse_mode='Markdown', reply_markup=markup)
+    else:
+        bot.send_message(CHANNEL_ID, caption, parse_mode='Markdown', reply_markup=markup)
+
+# --- هندلرهای تلگرام (ثبت‌نام مشتری و پنل ادمین) ---
 
 @bot.message_handler(commands=['start'])
 def welcome(m):
     user_id = m.from_user.id
     
-    # اگر ادمین بود
     if user_id == ADMIN_ID:
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("➕ افزودن محصول جدید")
-        return bot.send_message(m.chat.id, "ادمین عزیز خوش آمدید:", reply_markup=markup)
+        return bot.send_message(m.chat.id, "خوش آمدید ادمین عزیز. محصول جدیدی دارید؟", reply_markup=markup)
 
-    # برای کاربران معمولی
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -71,23 +117,23 @@ def welcome(m):
         conn.close()
 
         if user:
-            bot.send_message(m.chat.id, f"سلام {user[0]} عزیز! خوش آمدید به بانه استور. ✨")
+            bot.send_message(m.chat.id, f"سلام {user[0]} عزیز! به بانه استور خوش آمدید. ✨\nمحصولات جدید را در کانال دنبال کنید: {CHANNEL_ID}")
         else:
-            msg = bot.send_message(m.chat.id, "سلام! برای ثبت‌نام در فروشگاه، لطفاً نام و نام خانوادگی خود را وارد کنید:")
+            msg = bot.send_message(m.chat.id, "سلام! به بانه استور خوش آمدید. 😊\nبرای ثبت‌نام و مشاهده قیمت‌ها، لطفاً نام و نام خانوادگی خود را وارد کنید:")
             bot.register_next_step_handler(msg, save_name)
     except Exception as e:
-        bot.send_message(m.chat.id, "در حال حاضر سیستم ثبت‌نام با اختلال مواجه است، اما می‌توانید از کانال دیدن کنید.")
-        print(f"User check error: {e}")
+        bot.send_message(m.chat.id, "خوش آمدید! برای مشاهده محصولات وارد کانال شوید.")
+        print(f"User Check Error: {e}")
 
 def save_name(m):
-    full_name = m.text
-    if not full_name or len(full_name) < 3:
-        msg = bot.reply_to(m, "لطفاً نام معتبر وارد کنید:")
+    if not m.text or m.text.startswith('/'):
+        msg = bot.send_message(m.chat.id, "لطفاً یک نام معتبر وارد کنید:")
         return bot.register_next_step_handler(msg, save_name)
-        
+    
+    full_name = m.text
     markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
     markup.add(types.KeyboardButton("📱 ارسال شماره موبایل", request_contact=True))
-    msg = bot.send_message(m.chat.id, f"ممنون {full_name} عزیز، حالا با زدن دکمه زیر شماره خود را تایید کنید:", reply_markup=markup)
+    msg = bot.send_message(m.chat.id, f"ممنون {full_name}. برای تکمیل ثبت‌نام، شماره موبایل خود را ارسال کنید:", reply_markup=markup)
     bot.register_next_step_handler(msg, save_phone, full_name)
 
 def save_phone(m, full_name):
@@ -100,14 +146,28 @@ def save_phone(m, full_name):
             conn.commit()
             cur.close()
             conn.close()
-            bot.send_message(m.chat.id, "ثبت‌نام شما با موفقیت تکمیل شد! ✅", reply_markup=types.ReplyKeyboardRemove())
-        except Exception as e:
-            bot.send_message(m.chat.id, "خطا در ذخیره‌سازی اطلاعات.")
+            bot.send_message(m.chat.id, "ثبت‌نام شما با موفقیت انجام شد! ✅", reply_markup=types.ReplyKeyboardRemove())
+        except:
+            bot.send_message(m.chat.id, "خطا در ذخیره اطلاعات. لطفاً دوباره /start بزنید.")
     else:
-        bot.send_message(m.chat.id, "لطفاً برای ارسال شماره فقط از دکمه استفاده کنید. دوباره /start بزنید.")
+        bot.send_message(m.chat.id, "لطفاً فقط از دکمه 'ارسال شماره موبایل' استفاده کنید.")
 
-# --- بقیه توابع (استخراج محصول و ارسال به کانال) همانند قبل ---
-# [اینجا توابع extract_product_info و handle_messages ادمین را قرار دهید]
+@bot.message_handler(func=lambda m: m.text == "➕ افزودن محصول جدید")
+def admin_prompt(m):
+    if m.from_user.id == ADMIN_ID:
+        bot.send_message(m.chat.id, "لطفاً لینک محصول را بفرستید:")
+
+@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and "http" in m.text)
+def admin_process(m):
+    sent = bot.reply_to(m, "⏳ در حال استخراج و ارسال به کانال...")
+    data = extract_product_info(m.text)
+    if data:
+        send_to_channel(data)
+        bot.edit_message_text("✅ محصول با موفقیت منتشر شد.", m.chat.id, sent.message_id)
+    else:
+        bot.edit_message_text("❌ خطا! اطلاعات محصول یافت نشد.", m.chat.id, sent.message_id)
+
+# --- تنظیمات Flask و Webhook ---
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -117,6 +177,10 @@ def webhook():
         bot.process_new_updates([update])
         return ''
     return 'Forbidden', 403
+
+@app.route('/')
+def index():
+    return "BanehStoore Bot is Active!"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
