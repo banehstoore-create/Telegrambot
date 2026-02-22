@@ -47,13 +47,14 @@ ADMIN_PANEL, BROADCAST = range(3, 5)
 TRACK_ORDER = 15
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
 }
 SITE_URL = "https://banehstoore.ir"
-SUPPORT_URL = "https://t.me/+989180514202"
 CHANNEL_ID = "@banehstoore"
+SUPPORT_URL = "https://t.me/+989180514202"
+MIXIN_API_KEY = os.getenv('MIXIN_API_KEY') # توکن اختیاری برای پیگیری خودکار
 
-# --- ۴. توابع پیگیری سفارش و فاکتور ---
+# --- ۴. توابع پیگیری و ثبت هوشمند فاکتور (ترکیب دستی و خودکار) ---
 
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 لطفاً شماره سفارش خود را وارد کنید:")
@@ -61,16 +62,31 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
+    wait = await update.message.reply_text("⏳ در حال بررسی وضعیت سفارش...")
+    
+    # ابتدا بررسی در دیتابیس داخلی (فاکتورهای کپی شده توسط ادمین)
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
         order = cur.fetchone(); cur.close(); conn.close()
         if order:
-            await update.message.reply_text(f"📄 **اطلاعات سفارش شما:**\n\n{order[0]}", parse_mode='Markdown')
-        else:
-            await update.message.reply_text("❌ فاکتوری با این شماره یافت نشد.")
-    except:
-        await update.message.reply_text("❌ خطا در سیستم پیگیری.")
+            await wait.edit_text(f"📄 **اطلاعات سفارش شما:**\n\n{order[0]}", parse_mode='Markdown')
+            return ConversationHandler.END
+    except: pass
+
+    # اگر در دیتابیس نبود، استعلام از سایت (API میکسین)
+    if MIXIN_API_KEY:
+        try:
+            api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
+            res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                status = data.get('status_display', 'ثبت شده')
+                await wait.edit_text(f"📦 **وضعیت سفارش در سایت:**\n\nشماره سفارش: {order_no}\nوضعیت فعلی: {status}")
+                return ConversationHandler.END
+        except: pass
+
+    await wait.edit_text("❌ سفارش یافت نشد. اگر فاکتور دارید، شماره را درست وارد کنید.")
     return ConversationHandler.END
 
 async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,68 +94,53 @@ async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_T
     text = update.message.text
     try:
         order_id_match = re.search(r'شماره\s*:\s*(\d+)', text)
-        customer_match = re.search(r'تحویل گیرنده\s*:\s*(.*)', text)
-        price_match = re.search(r'مبلغ کل\s*:\s*([\d,٬]+)', text)
         if not order_id_match: return
         order_id = order_id_match.group(1)
-        customer_name = customer_match.group(1).strip() if customer_match else "نامشخص"
-        total_price = price_match.group(1).strip() if price_match else "نامشخص"
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("""
-            INSERT INTO orders (order_id, customer_name, items, total_price, status) 
-            VALUES (%s, %s, %s, %s, %s) 
-            ON CONFLICT (order_id) DO UPDATE SET 
-            customer_name=EXCLUDED.customer_name, items=EXCLUDED.items, total_price=EXCLUDED.total_price
-        """, (order_id, customer_name, text, total_price, "ثبت شده"))
+            INSERT INTO orders (order_id, items) VALUES (%s, %s) 
+            ON CONFLICT (order_id) DO UPDATE SET items=EXCLUDED.items
+        """, (order_id, text))
         conn.commit(); cur.close(); conn.close()
-        await update.message.reply_text(f"✅ فاکتور شماره {order_id} ذخیره شد.")
+        await update.message.reply_text(f"✅ فاکتور شماره {order_id} با موفقیت ذخیره شد.")
     except Exception as e:
-        await update.message.reply_text(f"❌ خطا در پردازش: {e}")
+        await update.message.reply_text(f"❌ خطا در ذخیره فاکتور: {e}")
 
-# --- ۵. بخش جستجوی محصول ---
+# --- ۵. بخش جستجوی محصول (تست شده و اصلاح شده) ---
 
 async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 نام محصول مورد نظر (مثلاً: جاروبرقی) را وارد کنید:")
+    await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:")
     return SEARCH_QUERY
 
 async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     if query in ["جستجوی محصول 🔍", "پیگیری سفارش 📦", "ورود به پنل مدیریت ⚙️"]:
-        await update.message.reply_text("جستجو لغو شد. لطفاً دوباره انتخاب کنید.")
         return ConversationHandler.END
 
     wait = await update.message.reply_text(f"⏳ در حال جستجو برای «{query}»...")
     try:
-        # جستجو بر اساس ساختار سایت‌ساز میکسین
         search_url = f"{SITE_URL}/search?q={query}"
         res = requests.get(search_url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
-        
-        kb = []
-        seen = set()
-
+        kb, seen = [], set()
         for link in soup.find_all('a', href=True):
             url = link['href']
             if url.startswith('/'): url = SITE_URL + url
             title = link.get_text().strip()
-            
-            # پیدا کردن لینک محصولاتی که نام طولانی و معتبر دارند
             if "/product/" in url and len(title) > 8:
-                clean_title = re.sub(r'مشاهده|خرید|افزودن به سبد|تومان|قیمت', '', title).strip()
+                clean_title = re.sub(r'مشاهده|خرید|افزودن|تومان|قیمت', '', title).strip()
                 if url not in seen and clean_title:
                     kb.append([InlineKeyboardButton(f"📦 {clean_title}", url=url)])
                     seen.add(url)
-            
             if len(kb) >= 15: break
 
         if kb:
             await wait.delete()
-            await update.message.reply_text(f"✅ نتایج یافت شده برای «{query}»:", reply_markup=InlineKeyboardMarkup(kb))
+            await update.message.reply_text(f"✅ نتایج یافت شده:", reply_markup=InlineKeyboardMarkup(kb))
         else:
             await wait.edit_text(f"❌ محصولی برای «{query}» پیدا نشد.")
     except:
-        await wait.edit_text("❌ خطا در جستجو. مجدداً تلاش کنید.")
-    
+        await wait.edit_text("❌ خطا در اتصال به سایت.")
     return ConversationHandler.END
 
 # --- ۶. توابع ادمین و انتشار محصول ---
@@ -147,27 +148,20 @@ async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text
-    msg = await update.message.reply_text("⏳ در حال استخراج و انتشار...")
+    msg = await update.message.reply_text("⏳ در حال انتشار...")
     try:
         res = requests.get(url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
-        title = (soup.find("meta", attrs={"property": "og:title"}) or soup.find("h1")).get("content", soup.find("h1").text)
+        title = (soup.find("meta", attrs={"property": "og:title"}) or soup.find("h1")).get("content", "محصول")
         img = soup.find("meta", attrs={"property": "og:image"})["content"]
         p_elem = soup.find(attrs={"data-price": True}) or soup.select_one(".product-price")
         p_val = "".join(filter(str.isdigit, p_elem.text if p_elem else ""))
         price = "{:,} تومان".format(int(p_val)//10) if p_val else "تماس بگیرید"
-        
-        caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n\n🔗 خرید مستقیم از سایت 👇"
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 ثبت سفارش آنلاین", url=url)],
-            [InlineKeyboardButton("👨‍💻 پشتیبانی فروش", url=SUPPORT_URL)]
-        ])
+        caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n\n🔗 خرید مستقیم 👇"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛒 ثبت سفارش", url=url)], [InlineKeyboardButton("👨‍💻 پشتیبانی", url=SUPPORT_URL)]])
         await context.bot.send_photo(CHANNEL_ID, img, caption, parse_mode='Markdown', reply_markup=kb)
-        await msg.edit_text("✅ محصول با موفقیت در کانال منتشر شد.")
-    except Exception as e:
-        await msg.edit_text(f"❌ خطا در استخراج اطلاعات: {e}")
-
-# --- ۷. شروع و ثبت‌نام ---
+        await msg.edit_text("✅ در کانال منتشر شد.")
+    except: await msg.edit_text("❌ خطا در استخراج اطلاعات.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -180,17 +174,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
         user_exists = cur.fetchone(); cur.close(); conn.close()
         if user_exists or str(user_id) == admin_id:
-            await update.message.reply_text("خوش آمدید! از منوی زیر استفاده کنید:", reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
+            await update.message.reply_text("خوش آمدید! از منو استفاده کنید:", reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
             return ConversationHandler.END
     except: pass
-    
-    await update.message.reply_text("سلام! خوش آمدید. لطفاً ابتدا نام و نام خانوادگی خود را وارد کنید:")
+    await update.message.reply_text("سلام! لطفاً نام و نام خانوادگی خود را وارد کنید:")
     return NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['full_name'] = update.message.text
     btn = [[KeyboardButton("ارسال شماره موبایل 📱", request_contact=True)]]
-    await update.message.reply_text("ممنون. حالا لطفاً شماره موبایل خود را با دکمه زیر تایید کنید:", reply_markup=ReplyKeyboardMarkup(btn, one_time_keyboard=True, resize_keyboard=True))
+    await update.message.reply_text("لطفاً شماره خود را تایید کنید:", reply_markup=ReplyKeyboardMarkup(btn, one_time_keyboard=True, resize_keyboard=True))
     return PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,40 +193,35 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("INSERT INTO users (user_id, full_name, phone_number) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (user_id, name, phone))
         conn.commit(); cur.close(); conn.close()
-        await update.message.reply_text("✅ ثبت‌نام شما تکمیل شد!", reply_markup=ReplyKeyboardMarkup([["جستجوی محصول 🔍", "پیگیری سفارش 📦"]], resize_keyboard=True))
+        await update.message.reply_text("✅ ثبت‌نام موفق!", reply_markup=ReplyKeyboardMarkup([["جستجوی محصول 🔍", "پیگیری سفارش 📦"]], resize_keyboard=True))
     except: pass
     return ConversationHandler.END
 
-# --- ۸. پنل مدیریت ---
+# --- ۷. پنل مدیریت (بازگردانی شده) ---
 
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     kb = [["آمار ربات 📊", "ارسال پیام همگانی 📢"], ["خروج از پنل 🔙"]]
-    await update.message.reply_text("🛠 به پنل مدیریت خوش آمدید:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    await update.message.reply_text("🛠 پنل مدیریت:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
     return ADMIN_PANEL
 
 async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection(); cur = conn.cursor(); cur.execute("SELECT COUNT(*) FROM users")
-    count = cur.fetchone()[0]
+    await update.message.reply_text(f"👥 تعداد کاربران: {cur.fetchone()[0]}")
     cur.close(); conn.close()
-    await update.message.reply_text(f"👥 تعداد کل کاربران ربات: {count} نفر")
 
 async def pre_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("لطفاً پیام خود را (متن، عکس یا...) ارسال کنید تا برای همه فرستاده شود:"); return BROADCAST
+    await update.message.reply_text("پیام را بفرستید:"); return BROADCAST
 
 async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection(); cur = conn.cursor(); cur.execute("SELECT user_id FROM users")
-    users = cur.fetchall(); cur.close(); conn.close()
-    count = 0
-    for u in users:
-        try:
-            await context.bot.copy_message(u[0], update.message.chat_id, update.message.message_id)
-            count += 1
+    for u in cur.fetchall():
+        try: await context.bot.copy_message(u[0], update.message.chat_id, update.message.message_id)
         except: pass
-    await update.message.reply_text(f"✅ پیام شما برای {count} کاربر ارسال شد."); return ADMIN_PANEL
+    cur.close(); conn.close()
+    await update.message.reply_text("✅ ارسال شد."); return ADMIN_PANEL
 
-# --- ۹. پیکربندی و اجرا ---
-
+# --- ۸. اجرای نهایی ---
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
     init_db()
@@ -242,52 +230,38 @@ if __name__ == '__main__':
         app = ApplicationBuilder().token(TOKEN).build()
         
         # هندلر جستجو
-        search_conv = ConversationHandler(
+        app.add_handler(ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^جستجوی محصول 🔍$"), search_start)],
             states={SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search)]},
-            fallbacks=[CommandHandler('start', start)],
-            allow_reentry=True
-        )
+            fallbacks=[CommandHandler('start', start)], allow_reentry=True
+        ))
 
         # هندلر پیگیری سفارش
-        track_conv = ConversationHandler(
+        app.add_handler(ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^پیگیری سفارش 📦$"), track_order_start)],
             states={TRACK_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_track_order)]},
-            fallbacks=[CommandHandler('start', start)],
-            allow_reentry=True
-        )
+            fallbacks=[CommandHandler('start', start)], allow_reentry=True
+        ))
 
         # هندلر ادمین
-        admin_conv = ConversationHandler(
+        app.add_handler(ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^ورود به پنل مدیریت ⚙️$"), admin_menu)],
             states={
                 ADMIN_PANEL: [MessageHandler(filters.Regex("^آمار ربات 📊$"), bot_stats), MessageHandler(filters.Regex("^ارسال پیام همگانی 📢$"), pre_broadcast)],
                 BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, do_broadcast)]
             },
-            fallbacks=[MessageHandler(filters.Regex("^خروج از پنل 🔙$"), start)],
-            allow_reentry=True
-        )
+            fallbacks=[MessageHandler(filters.Regex("^خروج از پنل 🔙$"), start)], allow_reentry=True
+        ))
 
         # هندلر ثبت‌نام
-        reg_conv = ConversationHandler(
+        app.add_handler(ConversationHandler(
             entry_points=[CommandHandler('start', start)],
-            states={
-                NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-                PHONE: [MessageHandler(filters.CONTACT, get_phone)]
-            },
-            fallbacks=[CommandHandler('start', start)],
-            allow_reentry=True
-        )
+            states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)], PHONE: [MessageHandler(filters.CONTACT, get_phone)]},
+            fallbacks=[CommandHandler('start', start)], allow_reentry=True
+        ))
 
-        # اضافه کردن به اپلیکیشن به ترتیب اولویت
-        app.add_handler(search_conv)
-        app.add_handler(track_conv)
-        app.add_handler(admin_conv)
-        app.add_handler(reg_conv)
-        
-        # سایر هندلرها
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
         
-        print("🚀 Bot is Online and Fixes Applied!")
+        print("🚀 Bot is Online with All Features!")
         app.run_polling()
