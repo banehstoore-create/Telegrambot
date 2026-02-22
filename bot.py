@@ -54,24 +54,27 @@ ADMIN_PANEL, BROADCAST = range(3, 5)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_id = os.getenv('ADMIN_ID')
-
-    # کیبورد عمومی برای کاربرانی که ثبت نام کرده‌اند
-    user_keyboard = [["جستجوی محصول 🔍"]]
     
+    # کیبورد اصلی
+    main_kb = [["جستجوی محصول 🔍"]]
     if str(user_id) == admin_id:
-        keyboard = [["ورود به پنل مدیریت ⚙️"], ["جستجوی محصول 🔍"]]
-        await update.message.reply_text("سلام مدیر عزیز!", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
-        return ConversationHandler.END
+        main_kb.insert(0, ["ورود به پنل مدیریت ⚙️"])
 
-    # بررسی ثبت‌نام قبلی
-    # ... (کد قبلی دیتابیس) ...
-    if user:
-        await update.message.reply_text(f"خوش آمدید {user[0]}! چطور می‌تونم کمکتون کنم؟", 
-                                       reply_markup=ReplyKeyboardMarkup(user_keyboard, resize_keyboard=True))
-        return ConversationHandler.END
-    
-    # شروع ثبت نام اگر کاربر جدید بود
-    await update.message.reply_text("سلام! برای استفاده از خدمات لطفا ثبت‌نام کنید. نام خود را وارد کنید:")
+    # بررسی ثبت‌نام
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+        if user or str(user_id) == admin_id:
+            await update.message.reply_text(f"خوش آمدید! از منوی زیر انتخاب کنید:", 
+                reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
+            return ConversationHandler.END
+    except: pass
+
+    await update.message.reply_text("سلام! خوش آمدید. برای شروع نام خود را وارد کنید:")
     return NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,180 +96,117 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         cur.close()
         conn.close()
-        await update.message.reply_text("✅ ثبت‌نام موفق!", reply_markup=ReplyKeyboardRemove())
-        admin_id = os.getenv('ADMIN_ID')
-        if admin_id: await context.bot.send_message(chat_id=admin_id, text=f"🔔 مشتری جدید:\n👤 {full_name}\n📞 {phone}")
+        await update.message.reply_text("✅ ثبت‌نام موفق!", reply_markup=ReplyKeyboardMarkup([["جستجوی محصول 🔍"]], resize_keyboard=True))
     except Exception as e: print(f"Save Error: {e}")
     return ConversationHandler.END
+
+# --- ۴. پنل مدیریت ---
+async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
+    keyboard = [["آمار ربات 📊", "ارسال پیام همگانی 📢"], ["خروج از پنل 🔙"]]
+    await update.message.reply_text("پنل مدیریت:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    return ADMIN_PANEL
+
+async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM users"); count = cur.fetchone()[0]
+    cur.close(); conn.close()
+    await update.message.reply_text(f"👥 کاربران: {count}")
+
+async def pre_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("پیام را بفرستید:")
+    return BROADCAST
+
+async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = get_db_connection(); cur = conn.cursor(); cur.execute("SELECT user_id FROM users")
+    users = cur.fetchall(); cur.close(); conn.close()
+    for u in users:
+        try: await context.bot.copy_message(u[0], update.message.chat_id, update.message.message_id)
+        except: pass
+    await update.message.reply_text("✅ ارسال شد.")
+    return ADMIN_PANEL
+
+# --- ۵. جستجو و استخراج (میکسین) ---
+CHANNEL_ID = "@banehstoore" 
+SUPPORT_URL = "https://t.me/+989180514202"
 
 async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
     if query == "جستجوی محصول 🔍":
-        await update.message.reply_text("لطفاً نام محصول مورد نظر خود را بفرستید (مثلاً: سرخ کن):")
+        await update.message.reply_text("لطفاً نام محصول (مثلاً سرخ کن) را بنویسید:")
         return
 
-    wait_msg = await update.message.reply_text(f"🔎 در حال جستجوی '{query}' در بانه استور...")
-
+    wait = await update.message.reply_text("🔎 در حال جستجو در بانه استور...")
     try:
-        # آدرس جستجو در سایت‌ساز میکسین
-        search_url = f"https://banehstoore.ir/search/{query}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(search_url, headers=headers, timeout=15)
+        res = requests.get(f"https://banehstoore.ir/search/{query}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
-
-        # استخراج محصولات (بر اساس کلاس‌های استاندارد میکسین برای کارت محصول)
-        # معمولا در میکسین محصولات در تگ‌هایی با کلاس product-item یا مشابه هستند
-        products = soup.select(".product-item, .product-card")[:8] # نمایش ۸ نتیجه برتر
-
-        if not products:
-            await wait_msg.edit_text("❌ متأسفانه محصولی با این عنوان پیدا نشد.")
+        # کلاس‌های استاندارد میکسین برای لیست جستجو
+        items = soup.select(".product-item, .product-card")[:10]
+        
+        if not items:
+            await wait.edit_text("❌ موردی پیدا نشد.")
             return
 
-        keyboard = []
-        for pr in products:
-            name_tag = pr.select_one(".product-title, h3, .name")
-            link_tag = pr.select_one("a")
-            
-            if name_tag and link_tag:
-                name = name_tag.text.strip()
-                link = link_tag['href']
-                if not link.startswith("http"):
-                    link = "https://banehstoore.ir" + link
-                
-                keyboard.append([InlineKeyboardButton(name, url=link)])
-
-        if keyboard:
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await wait_msg.delete()
-            await update.message.reply_text(f"✅ نتایج یافت شده برای '{query}':", reply_markup=reply_markup)
-        else:
-            await wait_msg.edit_text("❌ نتیجه‌ای یافت نشد.")
-
-    except Exception as e:
-        print(f"Search Error: {e}")
-        await wait_msg.edit_text("❌ اختلال در ارتباط با سایت. لطفا دوباره تلاش کنید.")
-
-# --- پنل مدیریت ---
-async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
-    keyboard = [["آمار ربات 📊", "ارسال پیام همگانی 📢"], ["خروج از پنل 🔙"]]
-    await update.message.reply_text("پنل مدیریت فعال شد:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
-    return ADMIN_PANEL
-
-async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        count = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        await update.message.reply_text(f"👥 تعداد کل کاربران: {count} نفر")
-    except Exception as e: await update.message.reply_text(f"خطا: {e}")
-
-async def pre_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("لطفاً پیام خود را بفرستید (متن، عکس یا فایل):")
-    return BROADCAST
-
-async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT user_id FROM users")
-        users = cur.fetchall()
-        cur.close()
-        conn.close()
-        success, fail = 0, 0
-        for user in users:
-            try:
-                await context.bot.copy_message(chat_id=user[0], from_chat_id=msg.chat_id, message_id=msg.message_id)
-                success += 1
-            except: fail += 1
-        await update.message.reply_text(f"✅ ارسال پایان یافت.\nموفق: {success}\nناموفق: {fail}")
-    except Exception as e: await update.message.reply_text(f"خطا: {e}")
-    return ADMIN_PANEL
-
-# --- ۴. استخراج محصول از میکسین ---
-CHANNEL_ID = "@banehstoore" 
-SUPPORT_URL = "https://t.me/+989180514202"
+        kb = []
+        for it in items:
+            title = it.select_one(".product-title, h3, .name").text.strip()
+            link = it.select_one("a")['href']
+            if not link.startswith("http"): link = "https://banehstoore.ir" + link
+            kb.append([InlineKeyboardButton(title, url=link)])
+        
+        await wait.delete()
+        await update.message.reply_text(f"نتایج جستجو برای {query}:", reply_markup=InlineKeyboardMarkup(kb))
+    except: await wait.edit_text("❌ خطا در جستجو.")
 
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text
-    if not url.startswith("https://banehstoore.ir"): return
-    
-    msg = await update.message.reply_text("⏳ در حال استخراج اطلاعات...")
+    msg = await update.message.reply_text("⏳ در حال استخراج...")
     try:
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
-        res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
-
-        title_meta = soup.find("meta", attrs={"property": "og:title"})
-        title = title_meta["content"] if title_meta else soup.title.string
-        img_meta = soup.find("meta", attrs={"property": "og:image"})
-        img_url = img_meta["content"] if img_meta else None
+        title = soup.find("meta", attrs={"property": "og:title"})["content"]
+        img = soup.find("meta", attrs={"property": "og:image"})["content"]
         
-        price = "تماس بگیرید"
-        price_element = soup.find(attrs={"data-price": True}) or soup.find(attrs={"itemprop": "price"}) or soup.select_one(".product-price")
-        if price_element:
-            price_val = price_element.get("data-price") or price_element.get("content") or price_element.text.strip()
-            try:
-                numeric_price = "".join(filter(str.isdigit, str(price_val)))
-                if numeric_price:
-                    final_price = int(numeric_price) // 10 # تقسیم بر ۱۰
-                    price = "{:,}".format(final_price) + " تومان"
-            except: pass
+        # استخراج و تقسیم قیمت بر ۱۰
+        p_elem = soup.find(attrs={"data-price": True}) or soup.find(attrs={"itemprop": "price"})
+        p_val = "".join(filter(str.isdigit, p_elem.get("data-price") or p_elem.text))
+        price = "{:,} تومان".format(int(p_val)//10) if p_val else "تماس بگیرید"
 
-        stock = "موجود در انبار ✅" if "InStock" in res.text or "موجود" in res.text else "ناموجود ❌"
-        caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n📦 وضعیت: {stock}\n\n🔗 خرید از سایت 👇"
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🛒 ثبت سفارش و خرید", url=url)], [InlineKeyboardButton("👨‍💻 پشتیبانی", url=SUPPORT_URL)]])
+        caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n\n🔗 خرید مستقیم 👇"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛒 ثبت سفارش", url=url)], [InlineKeyboardButton("👨‍💻 پشتیبانی", url=SUPPORT_URL)]])
+        await context.bot.send_photo(CHANNEL_ID, img, caption, parse_mode='Markdown', reply_markup=kb)
+        await msg.edit_text("✅ منتشر شد.")
+    except: await msg.edit_text("❌ خطا.")
 
-        if img_url:
-            await context.bot.send_photo(chat_id=CHANNEL_ID, photo=img_url, caption=caption, parse_mode='Markdown', reply_markup=keyboard)
-        else:
-            await context.bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode='Markdown', reply_markup=keyboard)
-        await msg.delete()
-    except Exception as e: await msg.edit_text(f"❌ خطا: {e}")
-
-# --- ۵. اجرای نهایی ---
+# --- ۶. اجرا ---
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
     init_db()
     TOKEN = os.getenv('BOT_TOKEN')
     if TOKEN:
         app = ApplicationBuilder().token(TOKEN).build()
-
-        # هندلر مدیریت
-        admin_conv = ConversationHandler(
+        
+        admin_handler = ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^ورود به پنل مدیریت ⚙️$"), admin_menu)],
-            states={
-                ADMIN_PANEL: [
-                    MessageHandler(filters.Regex("^آمار ربات 📊$"), bot_stats),
-                    MessageHandler(filters.Regex("^ارسال پیام همگانی 📢$"), pre_broadcast),
-                ],
-                BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, do_broadcast)],
-            },
+            states={ADMIN_PANEL: [MessageHandler(filters.Regex("^آمار ربات 📊$"), bot_stats), MessageHandler(filters.Regex("^ارسال پیام همگانی 📢$"), pre_broadcast)],
+                    BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, do_broadcast)]},
             fallbacks=[MessageHandler(filters.Regex("^خروج از پنل 🔙$"), start)],
             allow_reentry=True
         )
-
-        # هندلر ثبت‌نام
-        user_conv = ConversationHandler(
+        
+        user_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
-            states={
-                NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-                PHONE: [MessageHandler(filters.CONTACT, get_phone)]
-            },
+            states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+                    PHONE: [MessageHandler(filters.CONTACT, get_phone)]},
             fallbacks=[CommandHandler('start', start)],
             allow_reentry=True
         )
 
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND &
-        app.add_handler(admin_conv)
-        app.add_handler(user_conv)
+        app.add_handler(admin_handler)
+        app.add_handler(user_handler)
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
-         ~filters.Regex(r'^https://') & ~filters.Regex("^ورود به پنل"), search_products))
-
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_products))
+        
         print("🚀 Bot is running...")
         app.run_polling()
