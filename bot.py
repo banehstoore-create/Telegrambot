@@ -137,7 +137,7 @@ from bs4 import BeautifulSoup
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # تنظیمات کانال و پشتیبانی
-CHANNEL_ID = "@YourChannelID"  # آیدی کانال خود را اینجا وارد کنید (مثلا @banehstore_chanel)
+CHANNEL_ID = "@banehstoore"  # آیدی کانال خود را اینجا وارد کنید (مثلا @banehstore_chanel)
 SUPPORT_URL = "https://t.me/+989180514202"
 
 async def post_product_to_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
