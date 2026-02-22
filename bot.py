@@ -100,44 +100,43 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     if not url.startswith("https://banehstoore.ir"): return
     
-    msg = await update.message.reply_text("⏳ در حال استخراج قیمت هوشمند...")
+    msg = await update.message.reply_text("⏳ در حال استخراج اطلاعات دقیق از میکسین...")
     try:
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+        res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # استخراج نام و عکس
-        title = soup.find("meta", property="og:title")["content"] if soup.find("meta", property="og:title") else soup.title.string
-        img_url = soup.find("meta", property="og:image")["content"] if soup.find("meta", property="og:image") else None
+        # ۱. استخراج نام و عکس با متد اصلاح شده (بدون خطا)
+        title_meta = soup.find("meta", attrs={"property": "og:title"})
+        title = title_meta["content"] if title_meta else soup.title.string
         
-        # --- استخراج قیمت به روش JSON-LD (مخصوص سایت‌های مدرن و میکسین) ---
+        img_meta = soup.find("meta", attrs={"property": "og:image"})
+        img_url = img_meta["content"] if img_meta else None
+        
+        # ۲. استخراج قیمت (جستجوی عمیق در ساختار میکسین)
         price = "تماس بگیرید"
-        try:
-            # جستجو در اسکریپت‌های مخصوص گوگل (Schema.org)
-            json_ld = soup.find_all('script', type='application/ld+json')
-            for script in json_ld:
-                data = json.loads(script.string)
-                # اگر لیست بود یا دیکشنری
-                items = data if isinstance(data, list) else [data]
-                for item in items:
-                    if item.get("@type") == "Product" or "offers" in item:
-                        offers = item.get("offers")
-                        if isinstance(offers, dict):
-                            price = offers.get("price")
-                        elif isinstance(offers, list):
-                            price = offers[0].get("price")
-                        break
-        except:
-            pass
+        
+        # الف) جستجو در تگ‌های دیتای میکسین (دقیق‌ترین روش برای این سایت‌ساز)
+        price_element = soup.find(attrs={"data-price": True}) or \
+                        soup.find(attrs={"itemprop": "price"}) or \
+                        soup.select_one(".product-price") or \
+                        soup.select_one(".price-value")
 
-        # اگر قیمت پیدا شد، فرمت‌بندی کن
+        if price_element:
+            # اگر در اتریبیوت بود آن را بردار، در غیر این صورت متن تگ را
+            price = price_element.get("data-price") or price_element.get("content") or price_element.text.strip()
+        
+        # ب) تمیز کردن و فرمت‌دهی عدد قیمت
         if price and price != "تماس بگیرید":
             try:
-                # جدا کردن سه رقم سه رقم برای زیبایی
-                price = "{:,}".format(int(float(price))) + " تومان"
+                # حذف هر چیزی به جز اعداد
+                numeric_price = "".join(filter(str.isdigit, str(price)))
+                if numeric_price:
+                    price = "{:,}".format(int(numeric_price)) + " تومان"
             except:
-                price = str(price) + " تومان"
-        
-        # موجودی
+                pass
+
+        # ۳. موجودی
         stock = "موجود در انبار ✅" if "InStock" in res.text or "موجود" in res.text else "ناموجود ❌"
 
         caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n📦 وضعیت: {stock}\n\n🔗 خرید از سایت 👇"
@@ -149,9 +148,11 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await context.bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode='Markdown', reply_markup=keyboard)
         
-        await msg.delete() # حذف پیام در حال استخراج
+        await msg.delete()
     except Exception as e:
-        await msg.edit_text(f"❌ خطا: {str(e)}")
+        print(f"Detailed Error: {e}")
+        await msg.edit_text(f"❌ خطا در استخراج اطلاعات. لینک محصول را بررسی کنید.")
+
 # --- ۵. اجرای نهایی ---
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
