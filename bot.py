@@ -51,7 +51,7 @@ CHANNEL_ID = "@banehstoore"
 SUPPORT_URL = "https://t.me/+989180514202"
 MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 
-# --- ۴. بخش پیگیری سفارش (اصلاح شده بر اساس مستندات تصویری شما) ---
+# --- ۴. بخش پیگیری سفارش (نسخه نهایی با کد رهگیری پستی) ---
 
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 لطفاً شماره سفارش خود را وارد کنید:")
@@ -59,9 +59,8 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
-    wait = await update.message.reply_text("⏳ در حال دریافت اطلاعات دقیق از بانه استور...")
+    wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات از بانه استور...")
     
-    # دیتابیس داخلی (بدون تغییر)
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
@@ -71,7 +70,6 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
     except: pass
 
-    # استعلام از API بر اساس اسکرین‌شات ارسالی
     if MIXIN_API_KEY:
         try:
             api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
@@ -80,15 +78,15 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if res.status_code == 200:
                 data = res.json()
                 
-                # ۱. نام تحویل گیرنده (مطابق فیلد first_name و last_name در عکس)
+                # ۱. نام مشتری
                 fname = data.get('first_name', '')
                 lname = data.get('last_name', '')
                 customer_name = f"{fname} {lname}".strip() or "نامشخص"
 
-                # ۲. وضعیت (مطابق فیلد status در عکس)
+                # ۲. وضعیت
                 raw_status = data.get('status', 'pending')
                 status_map = {
-                    "pending": "⏳ در انتظار",
+                    "pending": "⏳ در انتظار بررسی",
                     "paid": "✅ پرداخت شده",
                     "canceled": "❌ لغو شده",
                     "preparing": "📦 در حال آماده‌سازی",
@@ -96,24 +94,26 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 }
                 status = status_map.get(raw_status.lower(), raw_status)
 
-                # ۳. مبلغ نهایی (مطابق فیلد final_price در عکس)
+                # ۳. مبلغ نهایی
                 f_price = data.get('final_price')
                 try:
                     total_price = "{:,} تومان".format(int(f_price)) if f_price is not None else "نامشخص"
                 except: total_price = "نامشخص"
 
-                # ۴. آدرس (مطابق فیلد shipping_address در عکس)
+                # ۴. آدرس
                 addr = data.get('shipping_address') or "ثبت نشده"
                 prov = data.get('shipping_province', '')
                 city = data.get('shipping_city', '')
                 full_address = f"{prov}، {city}، {addr}".strip('، ')
 
-                # ۵. تاریخ (مطابق فیلد creation_date در عکس)
-                c_date = data.get('creation_date', 'نامشخص')
-                # ساده‌سازی نمایش تاریخ (حذف ساعت و میلی‌ثانیه)
-                display_date = c_date.split('T')[0] if 'T' in str(c_date) else str(c_date)
+                # ۵. کد رهگیری پستی (فیلد جدید طبق مستندات)
+                tracking_code = data.get('shipping_tracking_code') or "هنوز صادر نشده"
 
-                # ۶. لیست اقلام
+                # ۶. تاریخ
+                c_date = data.get('creation_date', 'نامشخص')
+                display_date = str(c_date).split('T')[0] if 'T' in str(c_date) else str(c_date)
+
+                # ۷. لیست اقلام
                 items_text = ""
                 items = data.get('items', [])
                 for idx, item in enumerate(items, 1):
@@ -126,7 +126,8 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"👤 **تحویل گیرنده:** {customer_name}\n"
                     f"🚩 **وضعیت فعلی:** {status}\n"
                     f"💰 **مبلغ کل سفارش:** {total_price}\n"
-                    f"📍 **آدرس ارسال:** {full_address}\n\n"
+                    f"📍 **آدرس ارسال:** {full_address}\n"
+                    f"🆔 **کد رهگیری پستی:** `{tracking_code}`\n\n"
                     f"📝 **لیست اقلام سفارش:**\n{items_text if items_text else 'جزئیات کالا یافت نشد'}\n"
                     f"📅 **تاریخ ثبت:** {display_date}\n\n"
                     f"💡 برای پیگیری دقیق‌تر با پشتیبانی در ارتباط باشید."
@@ -138,7 +139,7 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد.")
     return ConversationHandler.END
 
-# --- سایر بخش‌ها (بدون تغییر طبق دستور شما) ---
+# --- سایر بخش‌ها (بدون هیچ تغییری) ---
 
 async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:")
