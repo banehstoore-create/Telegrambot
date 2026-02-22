@@ -211,33 +211,51 @@ if __name__ == '__main__':
     if TOKEN:
         app = ApplicationBuilder().token(TOKEN).build()
         
-        # هندلر پیگیری سفارش
-        app.add_handler(ConversationHandler(
-            entry_points=[MessageHandler(filters.Regex("^پیگیری سفارش 📦$"), lambda u, c: TRACK_ORDER)],
-            states={TRACK_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_track_order)]},
-            fallbacks=[CommandHandler('start', start)], allow_reentry=True
-        ))
+        # ۱. هندلر پیگیری سفارش (اصلاح شده)
+        # این هندلر باید بالاتر از بقیه باشد تا اولویت داشته باشد
+        track_handler = ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex("^پیگیری سفارش 📦$"), track_order_start)],
+            states={
+                TRACK_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_track_order)]
+            },
+            fallbacks=[CommandHandler('start', start), MessageHandler(filters.Regex("^برگشت 🔙$"), start)],
+            allow_reentry=True
+        )
 
-        # هندلر ادمین
-        app.add_handler(ConversationHandler(
+        # ۲. هندلر ادمین
+        admin_handler = ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^ورود به پنل مدیریت ⚙️$"), admin_menu)],
             states={
-                ADMIN_PANEL: [MessageHandler(filters.Regex("^آمار ربات 📊$"), bot_stats), MessageHandler(filters.Regex("^ارسال پیام همگانی 📢$"), pre_broadcast)],
+                ADMIN_PANEL: [
+                    MessageHandler(filters.Regex("^آمار ربات 📊$"), bot_stats), 
+                    MessageHandler(filters.Regex("^ارسال پیام همگانی 📢$"), pre_broadcast)
+                ],
                 BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, do_broadcast)]
             },
-            fallbacks=[MessageHandler(filters.Regex("^خروج از پنل 🔙$"), start)], allow_reentry=True
-        ))
+            fallbacks=[MessageHandler(filters.Regex("^خروج از پنل 🔙$"), start)],
+            allow_reentry=True
+        )
 
-        # هندلر ثبت‌نام
-        app.add_handler(ConversationHandler(
+        # ۳. هندلر ثبت‌نام (برای کاربرانی که عضو نیستند)
+        user_registration_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
-            states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)], PHONE: [MessageHandler(filters.CONTACT, get_phone)]},
-            fallbacks=[CommandHandler('start', start)], allow_reentry=True
-        ))
+            states={
+                NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+                PHONE: [MessageHandler(filters.CONTACT, get_phone)]
+            },
+            fallbacks=[CommandHandler('start', start)],
+            allow_reentry=True
+        )
 
-        # هندلرهای عمومی
+        # اضافه کردن هندلرها به ترتیب اولویت
+        app.add_handler(track_handler)
+        app.add_handler(admin_handler)
+        app.add_handler(user_registration_handler)
+        
+        # هندلرهای مستقیم (بدون استیت)
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_products))
         
+        print("🚀 Bot is Online and Tracking Fixed!")
         app.run_polling()
