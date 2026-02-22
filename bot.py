@@ -47,12 +47,13 @@ TRACK_ORDER = 15
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept-Language': 'fa-IR,fa;q=0.9',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'fa-IR,fa;q=0.9,en-US;q=0.8',
 }
 CHANNEL_ID = "@banehstoore"
 SUPPORT_URL = "https://t.me/+989180514202"
 
-# --- ۴. توابع پیگیری و ثبت هوشمند ---
+# --- ۴. توابع پیگیری و ثبت هوشمند فاکتور (بدون تغییر) ---
 
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 لطفاً شماره سفارش خود را وارد کنید:")
@@ -95,59 +96,55 @@ async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         await update.message.reply_text(f"❌ خطا در پردازش: {e}")
 
-# --- ۵. توابع جستجو و محصول ---
+# --- ۵. تابع جستجوی محصول (اصلاح شده و هوشمند) ---
 
 async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     if query == "جستجوی محصول 🔍":
         await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:"); return
     
-    wait = await update.message.reply_text(f"⏳ در حال جستجوی '{query}'...")
+    wait = await update.message.reply_text(f"⏳ در حال جستجوی قوی برای «{query}»...")
     try:
-        # جستجوی مستقیم در سایت بانه استور
         search_url = f"https://banehstoore.ir/?s={query}"
-        res = requests.get(search_url, headers=HEADERS, timeout=15)
+        res = requests.get(search_url, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(res.text, 'html.parser')
         
         kb, seen = [], set()
-        
-        # تمرکز فقط روی کلاس‌های محصول در قالب میکسین/وردپرس
-        # این کار باعث می‌شود ربات لینک‌های متفرقه را بررسی نکند و سریع پاسخ دهد
-        products = soup.find_all('div', class_='product-inner') or soup.find_all('div', class_='product-item')
-        
-        # اگر کلاس‌های بالا یافت نشد، از روش جایگزین سریع استفاده کن
-        if not products:
-            products = soup.select('.product h2 a') or soup.select('.product-title a')
 
-        for item in products:
-            # پیدا کردن لینک و عنوان
-            link_tag = item if item.name == 'a' else item.find('a', href=True)
-            if not link_tag: continue
+        # استخراج تمامی لینک‌هایی که به محصولات ختم می‌شوند
+        # این متد بسیار منعطف است و اگر سایت تغییر ظاهر دهد باز هم کار می‌کند
+        links = soup.find_all('a', href=True)
+        
+        for link in links:
+            url = link['href']
+            title = link.get_text().strip()
             
-            url = link_tag['href']
-            title = link_tag.get_text().strip()
+            # شرط محصول بودن: داشتن /product/ در لینک و داشتن اسم طولانی
+            if "/product/" in url and len(title) > 8:
+                # تمیز کردن عنوان از عبارات اضافی سایت
+                clean_title = re.sub(r'مشاهده محصول|انتخاب گزینه‌ها|افزودن به سبد|پیش نمایش', '', title).strip()
+                
+                if url not in seen and clean_title:
+                    kb.append([InlineKeyboardButton(f"📦 {clean_title}", url=url)])
+                    seen.add(url)
             
-            # پاکسازی و فیلتر نتایج
-            if "/product/" in url and url not in seen and len(title) > 5:
-                # حذف کلمات اضافی برای تمیز شدن دکمه‌ها
-                clean_title = title.replace("مشاهده محصول", "").replace("انتخاب گزینه‌ها", "").strip()
-                kb.append([InlineKeyboardButton(f"📦 {clean_title}", url=url)])
-                seen.add(url)
-            
-            if len(kb) >= 10: break # محدود کردن به ۱۰ نتیجه برای سرعت حداکثری
+            if len(kb) >= 15: break # حداکثر ۱۵ نتیجه برای جلوگیری از شلوغی
 
         if kb:
             await wait.delete()
             await update.message.reply_text(
-                f"✅ نتایج یافت شده برای «{query}»:", 
+                f"✅ محصولات یافت شده برای «{query}»:", 
                 reply_markup=InlineKeyboardMarkup(kb)
             )
         else:
-            await wait.edit_text(f"❌ محصولی برای «{query}» یافت نشد.\nلطفاً کلمه دیگری را امتحان کنید.")
+            await wait.edit_text(f"❌ محصولی برای «{query}» پیدا نشد.\n\n💡 پیشنهاد: کلمه را کوتاه‌تر وارد کنید (مثلاً به جای 'سماور برقی'، فقط 'سماور' را سرچ کنید).")
             
     except Exception as e:
-        print(f"Error: {e}")
-        await wait.edit_text("❌ متاسفانه در حال حاضر سایت پاسخگو نیست. لطفاً دوباره تلاش کنید.")
+        print(f"Search Error: {e}")
+        await wait.edit_text("❌ خطا در اتصال به سایت. لطفاً دوباره تلاش کنید.")
+
+# --- ۶. توابع ادمین و محصول (بدون تغییر) ---
+
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text
@@ -164,9 +161,7 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛒 ثبت سفارش", url=url)], [InlineKeyboardButton("👨‍💻 پشتیبانی", url=SUPPORT_URL)]])
         await context.bot.send_photo(CHANNEL_ID, img, caption, parse_mode='Markdown', reply_markup=kb)
         await msg.edit_text("✅ منتشر شد.")
-    except: await msg.edit_text("❌ خطا در استخراج لینک.")
-
-# --- ۶. توابع ادمین و ثبت‌نام ---
+    except: await msg.edit_text("❌ خطا در استخراج.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -177,8 +172,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
-        user_exists = cur.fetchone()
-        cur.close(); conn.close()
+        user_exists = cur.fetchone(); cur.close(); conn.close()
         if user_exists or str(user_id) == admin_id:
             await update.message.reply_text("خوش آمدید! از منو استفاده کنید:", reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
             return ConversationHandler.END
@@ -260,16 +254,11 @@ if __name__ == '__main__':
             allow_reentry=True
         )
 
-        # ترتیب هندلرها بسیار مهم است
         app.add_handler(track_handler)
         app.add_handler(admin_handler)
         app.add_handler(user_reg_handler)
-        
-        # هندلرهای پیام مستقیم
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
-        
-        # هندلر جستجو در انتها باشد تا با دکمه‌های دیگر تداخل نکند
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_products))
         
         print("🚀 Bot is Online!")
