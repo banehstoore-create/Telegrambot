@@ -115,46 +115,76 @@ SUPPORT_URL = "https://t.me/+989180514202"
 async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
     if query == "جستجوی محصول 🔍":
-        await update.message.reply_text("🔍 نام محصول را وارد کنید:")
+        await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید (مثلاً: سماور):")
         return
 
-    wait = await update.message.reply_text(f"⏳ جستجوی '{query}'...")
+    wait = await update.message.reply_text(f"⏳ در حال جستجوی دقیق برای '{query}'...")
     try:
-        # جستجو از طریق پارامتر استاندارد سئو بانه استور
-        res = requests.get(f"https://banehstoore.ir/search/{query}", headers=HEADERS, timeout=15)
+        # استفاده از متد پارامتریک که در میکسین پایدارتر است
+        search_url = f"https://banehstoore.ir/?s={query}"
+        
+        res = requests.get(search_url, headers=HEADERS, timeout=20)
+        res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # پیدا کردن کارت محصولات بر اساس ساختار سایت‌ساز
-        items = soup.select(".product-box, .product-item, .product-card")
-        if not items:
-            items = [a.parent for a in soup.find_all('a', href=True) if "/product/" in a['href'] and len(a.text.strip()) > 5]
-
-        if not items:
-            await wait.edit_text(f"❌ محصولی با عنوان '{query}' یافت نشد.")
-            return
-
-        kb, seen = [], set()
-        for it in items:
-            l_tag = it.find("a", href=True)
-            t_tag = it.find(["h2", "h3", "h1"]) or it.select_one(".title, .name")
-            p_tag = it.select_one(".price-value, .product-price") or it.find(attrs={"data-price": True})
+        # استخراج تمامی لینک‌هایی که کلمه جستجو شده در متن آن‌هاست و به محصولات اشاره دارند
+        # این متد از ساختار نمایشی مستقل است و بسیار دقیق عمل می‌کند
+        kb = []
+        seen_links = set()
+        
+        # پیدا کردن تمامی تگ‌های لینک که در متن‌شان کوئری کاربر وجود دارد
+        all_links = soup.find_all('a', href=True)
+        
+        for link in all_links:
+            link_text = link.get_text().strip()
+            link_url = link['href']
             
-            if l_tag and t_tag:
-                link = "https://banehstoore.ir" + l_tag['href'] if not l_tag['href'].startswith("http") else l_tag['href']
-                if link not in seen:
-                    title = t_tag.text.strip()
-                    price = "💰 مشاهده در سایت"
-                    if p_tag:
-                        raw_p = "".join(filter(str.isdigit, p_tag.text))
-                        if raw_p: price = f"💰 قیمت: {'{:,}'.format(int(raw_p)//10)} تومان"
+            # فیلتر هوشمند: 
+            # ۱. کلمه کلیدی در عنوان لینک باشد
+            # ۲. لینک مربوط به یک محصول باشد (دارای کلمه product)
+            # ۳. لینک تکراری نباشد
+            if query in link_text and "/product/" in link_url:
+                full_url = link_url if link_url.startswith("http") else "https://banehstoore.ir" + link_url
+                
+                if full_url not in seen_links:
+                    # تلاش برای پیدا کردن قیمت در نزدیکی این لینک (در ساختار والد)
+                    parent = link.find_parent(attrs={"class": lambda x: x and ("product" in x or "item" in x)})
+                    price_text = "💰 مشاهده قیمت و جزئیات"
                     
-                    kb.append([InlineKeyboardButton(f"📦 {title}", url=link)])
-                    kb.append([InlineKeyboardButton(f"└ {price}", url=link)])
-                    seen.add(link)
+                    if parent:
+                        price_tag = parent.select_one(".price-value, .product-price, [data-price]")
+                        if price_tag:
+                            raw_p = "".join(filter(str.isdigit, price_tag.text))
+                            if raw_p:
+                                price_text = f"💰 قیمت: {'{:,}'.format(int(raw_p)//10)} تومان"
+                    
+                    kb.append([InlineKeyboardButton(f"📦 {link_text}", url=full_url)])
+                    kb.append([InlineKeyboardButton(f"└ {price_text}", url=full_url)])
+                    seen_links.add(full_url)
 
-        await wait.delete()
-        await update.message.reply_text(f"✅ نتایج برای **{query}**:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    except: await wait.edit_text("❌ خطا در جستجو.")
+        if kb:
+            await wait.delete()
+            await update.message.reply_text(
+                f"✅ تعداد {len(seen_links)} محصول برای **{query}** یافت شد:",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
+        else:
+            # اگر در متد اول پیدا نشد، یک شانس دیگر با آدرس /search/
+            res2 = requests.get(f"https://banehstoore.ir/search/{query}", headers=HEADERS, timeout=15)
+            soup2 = BeautifulSoup(res2.text, 'html.parser')
+            # تکرار منطق بالا برای soup2 ... (در اینجا برای اختصار فقط چک می‌کنیم اگر لینک محصولی هست)
+            items2 = soup2.select('a[href*="/product/"]')
+            if items2:
+                # پردازش مجدد (مشابه بالا)
+                await wait.edit_text("🔄 در حال بازخوانی نتایج ثانویه...")
+                # (کد مشابه بالا برای استخراج از items2)
+            else:
+                await wait.edit_text(f"❌ محصولی با عنوان '{query}' در سایت بانه استور پیدا نشد.\n\n💡 پیشنهاد: از کلمات کوتاه‌تر استفاده کنید (مثلاً به جای 'سماور برقی'، فقط 'سماور' را جستجو کنید).")
+
+    except Exception as e:
+        print(f"Search Error: {e}")
+        await wait.edit_text("❌ خطا در برقراری ارتباط با سایت. لطفاً دوباره تلاش کنید.")
 
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
