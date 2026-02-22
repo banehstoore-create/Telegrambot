@@ -133,38 +133,40 @@ SUPPORT_URL = "https://t.me/+989180514202"
 async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
     if query == "جستجوی محصول 🔍":
-        await update.message.reply_text("لطفاً نام محصول مورد نظر را بنویسید (مثلاً: سرخ کن):")
+        await update.message.reply_text("لطفاً نام محصول مورد نظر را بنویسید (مثلاً: ساندبار):")
         return
 
-    wait = await update.message.reply_text(f"🔎 در حال جستجوی '{query}' در بانه استور...")
+    wait = await update.message.reply_text(f"🔎 در حال جستجوی دقیق '{query}' در بانه استور...")
     try:
-        # تست دو مدل آدرس جستجوی متداول در میکسین
-        search_urls = [
-            f"https://banehstoore.ir/search/{query}",
-            f"https://banehstoore.ir/?s={query}"
-        ]
+        # آدرس جستجوی مستقیم میکسین
+        url = f"https://banehstoore.ir/search/{query}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept-Language': 'fa-IR,fa;q=0.9,en-US;q=0.8,en;q=0.7'
+        }
         
-        items = []
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        res = requests.get(url, headers=headers, timeout=15)
+        res.encoding = 'utf-8'
+        soup = BeautifulSoup(res.text, 'html.parser')
         
-        for url in search_urls:
-            res = requests.get(url, headers=headers, timeout=10)
-            res.encoding = 'utf-8'
-            soup = BeautifulSoup(res.text, 'html.parser')
-            
-            # پیدا کردن کارت‌های محصول (با کلاس‌های متنوع میکسین)
-            items = soup.select(".product-item, .product-card, .product-grid-item, .item-product")
-            if items: break
+        # شناسایی کارت‌های محصول در میکسین (کلاس اختصاصی mixin)
+        # ما تمام احتمال‌ها شامل product-box و اشتقاقات آن را چک می‌کنیم
+        items = soup.find_all(attrs={"class": lambda x: x and ('product-box' in x or 'product-card' in x)})
+        
+        if not items:
+            # تلاش مجدد با جستجوی عمومی‌تر در تگ‌های لینک
+            items = [a.parent for a in soup.select('a[href*="/product/"]') if len(a.text.strip()) > 5][:10]
 
         if not items:
-            await wait.edit_text(f"❌ محصولی با عنوان '{query}' در سایت یافت نشد.\nلطفاً کلمه دیگری را امتحان کنید.")
+            await wait.edit_text(f"❌ محصولی با عنوان '{query}' یافت نشد.\nنکته: مطمئن شوید کلمه را درست تایپ کرده‌اید.")
             return
 
         kb = []
-        for it in items[:10]: # محدود به ۱۰ نتیجه
-            # پیدا کردن نام و لینک با دقت بالا
-            link_tag = it.select_one("a")
-            title_tag = it.select_one(".product-title, h3, .name, .title")
+        seen_links = set()
+
+        for it in items:
+            link_tag = it.find("a", href=True)
+            title_tag = it.find(["h2", "h3", "h1"]) or it.select_one(".title, .name, .product-title")
             
             if link_tag and title_tag:
                 title = title_tag.text.strip()
@@ -172,21 +174,21 @@ async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not link.startswith("http"):
                     link = "https://banehstoore.ir" + link
                 
-                # جلوگیری از تکرار لینک‌های مشابه
-                if [btn for btn in kb if btn[0].url == link]: continue
-                
-                kb.append([InlineKeyboardButton(title, url=link)])
-        
+                if link not in seen_links and len(title) > 2:
+                    kb.append([InlineKeyboardButton(title, url=link)])
+                    seen_links.add(link)
+            
+            if len(kb) >= 10: break # محدودیت برای جلوگیری از شلوغی
+
         if kb:
             await wait.delete()
             await update.message.reply_text(f"📦 نتایج یافت شده برای '{query}':", reply_markup=InlineKeyboardMarkup(kb))
         else:
-            await wait.edit_text("❌ نتایج یافت شد اما استخراج لینک‌ها با خطا مواجه شد.")
+            await wait.edit_text("❌ نتایج در سایت هست اما ربات نتوانست لینک‌ها را استخراج کند.")
 
     except Exception as e:
         print(f"Detailed Search Error: {e}")
-        await wait.edit_text("❌ خطا در برقراری ارتباط با سایت.")
-
+        await wait.edit_text("❌ خطا در اتصال به سایت. لطفا دقایقی دیگر تلاش کنید.")
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text
