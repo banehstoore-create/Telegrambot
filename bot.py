@@ -179,19 +179,47 @@ async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: await wait.edit_text("❌ خطا در اتصال به سایت.")
     return ConversationHandler.END
 
+# --- اصلاح منوی اصلی برای اضافه کردن دکمه دسته‌بندی ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     admin_id = os.getenv('ADMIN_ID')
-    main_kb = [["جستجوی محصول 🔍", "پیگیری سفارش 📦"]]
-    if str(user_id) == admin_id: main_kb.insert(0, ["ورود به پنل مدیریت ⚙️"])
+    
+    # منوی اصلی جدید با دکمه دسته‌بندی
+    main_kb = [
+        ["جستجوی محصول 🔍", "پیگیری سفارش 📦"],
+        ["🗂 دسته‌بندی محصولات"] # دکمه جدید در یک ردیف مجزا
+    ]
+    
+    if str(user_id) == admin_id:
+        main_kb.insert(0, ["ورود به پنل مدیریت ⚙️"])
+        
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
     user = cur.fetchone(); cur.close(); conn.close()
+    
     if user or str(user_id) == admin_id:
-        await update.message.reply_text("خوش آمدید!", reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
+        await update.message.reply_text(
+            "به ربات بانه استور خوش آمدید! یکی از گزینه‌های زیر را انتخاب کنید:",
+            reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True)
+        )
         return ConversationHandler.END
-    await update.message.reply_text("سلام! نام و نام خانوادگی خود را وارد کنید:")
+    
+    await update.message.reply_text("سلام! برای استفاده از خدمات ربات، نام و نام خانوادگی خود را وارد کنید:")
     return NAME
+
+# --- هندلر کلیک بر روی دکمه دسته‌بندی ---
+
+async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ایجاد یک کیبورد شیشه‌ای برای لینک مستقیم به سایت
+    kb = [
+        [InlineKeyboardButton("🌐 مشاهده لیست تمامی دسته‌ها در سایت", url=f"{SITE_URL}/categories/")]
+    ]
+    
+    await update.message.reply_text(
+        "📂 شما می‌توانید لیست کامل دسته‌بندی محصولات بانه استور را از طریق لینک زیر مشاهده کنید:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['full_name'] = update.message.text
