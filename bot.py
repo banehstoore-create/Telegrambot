@@ -107,42 +107,73 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
     if query == "جستجوی محصول 🔍":
-        await update.message.reply_text("🔍 نام محصول (یا بخشی از آن) را وارد کنید:")
+        await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:")
         return
 
-    wait = await update.message.reply_text(f"⏳ در حال جستجوی '{query}'...")
+    wait = await update.message.reply_text(f"⏳ در حال جستجوی تمامی نتایج برای '{query}'...")
     try:
-        # استفاده از هر دو متد جستجوی میکسین برای اطمینان
-        urls = [f"https://banehstoore.ir/search/{query}", f"https://banehstoore.ir/?s={query}"]
+        url = f"https://banehstoore.ir/search/{query}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept-Language': 'fa-IR,fa;q=0.9'
+        }
+        res = requests.get(url, headers=headers, timeout=15)
+        res.encoding = 'utf-8'
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # پیدا کردن کارت‌های محصول
+        items = soup.select(".product-box, .product-item, .product-card")
+        
+        # روش جایگزین اگر کلاس‌های بالا یافت نشد
+        if not items:
+            items = [a.parent for a in soup.select('a[href*="/product/"]') if len(a.text.strip()) > 5]
+
+        if not items:
+            await wait.edit_text(f"❌ محصولی با عنوان '{query}' یافت نشد.")
+            return
+
         kb = []
         seen = set()
 
-        for url in urls:
-            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-            soup = BeautifulSoup(res.text, 'html.parser')
+        for it in items:
+            link_tag = it.find("a", href=True)
+            title_tag = it.find(["h2", "h3", "h1"]) or it.select_one(".title, .name, .product-title")
+            price_tag = it.select_one(".price-value, .product-price, [data-price]")
             
-            # استخراج تمام لینک‌هایی که کلمه جستجو شده در متن آن‌هاست
-            # این بخش باعث می‌شود حتی اگر کارت محصول پیدا نشد، از روی لینک‌ها محصول پیدا شود
-            links = soup.find_all('a', href=True)
-            for l in links:
-                link_text = l.get_text().strip()
-                link_url = l['href']
+            if link_tag and title_tag:
+                title = title_tag.text.strip()
+                link = link_tag['href']
+                if not link.startswith("http"): link = "https://banehstoore.ir" + link
                 
-                # شرط هوشمند: کلمه در متن لینک باشد و لینک مربوط به محصول باشد
-                if query in link_text and "/product/" in link_url:
-                    if not link_url.startswith("http"): link_url = "https://banehstoore.ir" + link_url
-                    if link_url not in seen:
-                        kb.append([InlineKeyboardButton(link_text, url=link_url)])
-                        seen.add(link_url)
-            
-            if len(kb) > 0: break
+                if link not in seen:
+                    # پردازش قیمت (تقسیم بر ۱۰)
+                    price_text = "💰 مشاهده قیمت در سایت"
+                    if price_tag:
+                        # استخراج عدد از متن قیمت
+                        raw_p = "".join(filter(str.isdigit, price_tag.text))
+                        if raw_p:
+                            formatted_p = "{:,}".format(int(raw_p) // 10)
+                            price_text = f"💰 قیمت: {formatted_p} تومان"
+                    
+                    # اضافه کردن دکمه‌ها (نام در یک ردیف، قیمت در ردیف پایین)
+                    kb.append([InlineKeyboardButton(f"📦 {title}", url=link)])
+                    kb.append([InlineKeyboardButton(f"└ {price_text}", url=link)])
+                    seen.add(link)
 
         if kb:
             await wait.delete()
-            await update.message.reply_text(f"نتایج یافت شده برای '{query}':", reply_markup=InlineKeyboardMarkup(kb[:12]))
+            # نمایش پیام نهایی با تمام نتایج
+            await update.message.reply_text(
+                f"✅ تعداد {len(seen)} مورد برای **{query}** یافت شد:\n(برای جزئیات روی محصول کلیک کنید)",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
         else:
-            await wait.edit_text(f"❌ محصولی با عنوان '{query}' یافت نشد.\nمی‌توانید کلمه کوتاه‌تری را امتحان کنید.")
-    except: await wait.edit_text("❌ خطا در اتصال به سایت.")
+            await wait.edit_text("❌ نتایج یافت شد اما استخراج اطلاعات ناموفق بود.")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        await wait.edit_text("❌ خطا در اتصال به سایت یا پردازش اطلاعات.")
 
 # --- ۶. انتشار محصول (ادمین) ---
 CHANNEL_ID = "@banehstoore"
