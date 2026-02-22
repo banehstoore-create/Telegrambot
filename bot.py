@@ -75,27 +75,22 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=12)
             if res.status_code == 200:
                 data = res.json()
-                fname = data.get('first_name', ''); lname = data.get('last_name', '')
-                customer_name = f"{fname} {lname}".strip() or "نامشخص"
-                raw_status = data.get('status', 'pending')
+                customer_name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or "نامشخص"
                 status_map = {"pending": "⏳ در انتظار بررسی", "paid": "✅ پرداخت شده", "canceled": "❌ لغو شده", "preparing": "📦 در حال آماده‌سازی", "sent": "🚚 ارسال شده"}
-                status = status_map.get(raw_status.lower(), raw_status)
+                status = status_map.get(data.get('status', 'pending').lower(), data.get('status'))
                 f_price = data.get('final_price')
                 total_price = "{:,} تومان".format(int(f_price)) if f_price else "نامشخص"
-                addr = data.get('shipping_address') or "ثبت نشده"
-                prov = data.get('shipping_province', ''); city = data.get('shipping_city', '')
-                full_address = f"{prov}، {city}، {addr}".strip('، ')
+                full_address = f"{data.get('shipping_province', '')}، {data.get('shipping_city', '')}، {data.get('shipping_address', '')}".strip('، ')
                 tracking_code = data.get('shipping_tracking_code')
                 
                 keyboard = []
-                if tracking_code and tracking_code != "null":
+                if tracking_code and str(tracking_code).lower() != "none":
                     keyboard.append([InlineKeyboardButton("🔎 رهگیری مستقیم از سامانه پست", url=f"https://tracking.post.ir/?id={tracking_code}")])
                 
                 items_text = ""
                 for idx, item in enumerate(data.get('items', []), 1):
                     p_name = item.get('product_title') or item.get('name') or "محصول"
-                    qty = item.get('quantity') or 1
-                    items_text += f"{idx}. {p_name} (تعداد: {qty})\n"
+                    items_text += f"{idx}. {p_name} (تعداد: {item.get('quantity', 1)})\n"
 
                 msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n👤 **تحویل گیرنده:** {customer_name}\n🚩 **وضعیت:** {status}\n💰 **مبلغ:** {total_price}\n📍 **آدرس:** {full_address}\n🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n📝 **اقلام:**\n{items_text}")
                 await wait.edit_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
@@ -236,7 +231,7 @@ async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(f"✅ فاکتور {order_id} ذخیره شد.")
     except: pass
 
-# --- ۸. اجرای ربات ---
+# --- ۸. اجرای اصلی ربات ---
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
     init_db()
@@ -244,5 +239,34 @@ if __name__ == '__main__':
     if TOKEN:
         app = ApplicationBuilder().token(TOKEN).build()
         
-        # هندلرهای ساده
-        app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی
+        # هندلرهای پیام ساده
+        app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی محصولات$"), show_categories))
+        app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
+        app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
+
+        # گفتگوها (Conversations)
+        app.add_handler(ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex("^جستجوی محصول 🔍$"), search_start)],
+            states={SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search)]},
+            fallbacks=[CommandHandler('start', start)], allow_reentry=True
+        ))
+        app.add_handler(ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex("^پیگیری سفارش 📦$"), track_order_start)],
+            states={TRACK_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_track_order)]},
+            fallbacks=[CommandHandler('start', start)], allow_reentry=True
+        ))
+        app.add_handler(ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex("^ورود به پنل مدیریت ⚙️$"), admin_menu)],
+            states={
+                ADMIN_PANEL: [MessageHandler(filters.Regex("^آمار ربات 📊$"), bot_stats), MessageHandler(filters.Regex("^ارسال پیام همگانی 📢$"), pre_broadcast)],
+                BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, do_broadcast)]
+            },
+            fallbacks=[MessageHandler(filters.Regex("^خروج از پنل 🔙$"), start)], allow_reentry=True
+        ))
+        app.add_handler(ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)], PHONE: [MessageHandler(filters.CONTACT, get_phone)]},
+            fallbacks=[CommandHandler('start', start)], allow_reentry=True
+        ))
+        
+        app.run_polling()
