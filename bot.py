@@ -43,17 +43,17 @@ def init_db():
 # --- ۳. تنظیمات و متغیرها ---
 NAME, PHONE = range(2)
 ADMIN_PANEL, BROADCAST = range(3, 5)
+SEARCH_QUERY = 10
 TRACK_ORDER = 15
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'fa-IR,fa;q=0.9,en-US;q=0.8',
 }
-CHANNEL_ID = "@banehstoore"
+SITE_URL = "https://banehstoore.ir"
 SUPPORT_URL = "https://t.me/+989180514202"
+CHANNEL_ID = "@banehstoore"
 
-# --- ۴. توابع پیگیری و ثبت هوشمند فاکتور (بدون تغییر) ---
+# --- ۴. توابع پیگیری و فاکتور (بدون تغییر) ---
 
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 لطفاً شماره سفارش خود را وارد کنید:")
@@ -96,52 +96,58 @@ async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         await update.message.reply_text(f"❌ خطا در پردازش: {e}")
 
-# --- ۵. تابع جستجوی محصول (اصلاح شده و هوشمند) ---
+# --- ۵. بخش اصلاح شده جستجو مخصوص میکسین ---
 
-async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔍 نام محصول مورد نظر (مثلاً: خردکن) را وارد کنید:")
+    return SEARCH_QUERY
+
+async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
-    if query == "جستجوی محصول 🔍":
-        await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:"); return
+    wait = await update.message.reply_text(f"⏳ در حال جستجو برای «{query}» در بانه استور...")
     
-    wait = await update.message.reply_text(f"⏳ در حال جستجوی قوی برای «{query}»...")
     try:
-        search_url = f"https://banehstoore.ir/?s={query}"
-        res = requests.get(search_url, headers=HEADERS, timeout=20)
+        # در میکسین آدرس جستجو به این صورت است:
+        search_url = f"{SITE_URL}/search?q={query}"
+        res = requests.get(search_url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        kb, seen = [], set()
+        kb = []
+        seen_urls = set()
 
-        # استخراج تمامی لینک‌هایی که به محصولات ختم می‌شوند
-        # این متد بسیار منعطف است و اگر سایت تغییر ظاهر دهد باز هم کار می‌کند
-        links = soup.find_all('a', href=True)
-        
-        for link in links:
-            url = link['href']
+        # در سایت ساز میکسین، معمولاً محصولات در تگ‌های a با کلاس خاص یا در مسیر /product/ هستند
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            # تبدیل لینک‌های نسبی به کامل
+            if href.startswith('/'): href = SITE_URL + href
+            
             title = link.get_text().strip()
             
-            # شرط محصول بودن: داشتن /product/ در لینک و داشتن اسم طولانی
-            if "/product/" in url and len(title) > 8:
-                # تمیز کردن عنوان از عبارات اضافی سایت
-                clean_title = re.sub(r'مشاهده محصول|انتخاب گزینه‌ها|افزودن به سبد|پیش نمایش', '', title).strip()
+            # فیلتر کردن لینک‌های محصول
+            if "/product/" in href and len(title) > 5:
+                # حذف کلمات اضافی از دکمه‌ها
+                clean_title = re.sub(r'مشاهده|خرید|افزودن به سبد|تومان|قیمت', '', title).strip()
                 
-                if url not in seen and clean_title:
-                    kb.append([InlineKeyboardButton(f"📦 {clean_title}", url=url)])
-                    seen.add(url)
+                if href not in seen_urls and clean_title:
+                    kb.append([InlineKeyboardButton(f"📦 {clean_title}", url=href)])
+                    seen_urls.add(href)
             
-            if len(kb) >= 15: break # حداکثر ۱۵ نتیجه برای جلوگیری از شلوغی
+            if len(kb) >= 10: break
 
         if kb:
             await wait.delete()
             await update.message.reply_text(
-                f"✅ محصولات یافت شده برای «{query}»:", 
+                f"✅ نتایج یافت شده برای «{query}»:", 
                 reply_markup=InlineKeyboardMarkup(kb)
             )
         else:
-            await wait.edit_text(f"❌ محصولی برای «{query}» پیدا نشد.\n\n💡 پیشنهاد: کلمه را کوتاه‌تر وارد کنید (مثلاً به جای 'سماور برقی'، فقط 'سماور' را سرچ کنید).")
+            await wait.edit_text(f"❌ محصولی برای «{query}» پیدا نشد.\n\n💡 نکته: کلمه را کوتاه‌تر وارد کنید (مثلاً فقط 'خردکن').")
             
     except Exception as e:
         print(f"Search Error: {e}")
-        await wait.edit_text("❌ خطا در اتصال به سایت. لطفاً دوباره تلاش کنید.")
+        await wait.edit_text("❌ خطا در برقراری ارتباط با سایت.")
+    
+    return ConversationHandler.END
 
 # --- ۶. توابع ادمین و محصول (بدون تغییر) ---
 
@@ -219,7 +225,7 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.close(); conn.close()
     await update.message.reply_text("✅ ارسال شد."); return ADMIN_PANEL
 
-# --- ۷. اجرای نهایی ---
+# --- ۷. اجرای نهایی و تنظیم هندلرها ---
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
     init_db()
@@ -227,6 +233,14 @@ if __name__ == '__main__':
     if TOKEN:
         app = ApplicationBuilder().token(TOKEN).build()
         
+        # هندلر جستجو (جدید)
+        search_handler = ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex("^جستجوی محصول 🔍$"), search_start)],
+            states={SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search)]},
+            fallbacks=[CommandHandler('start', start)],
+            allow_reentry=True
+        )
+
         # هندلر پیگیری سفارش
         track_handler = ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^پیگیری سفارش 📦$"), track_order_start)],
@@ -254,12 +268,12 @@ if __name__ == '__main__':
             allow_reentry=True
         )
 
+        app.add_handler(search_handler)
         app.add_handler(track_handler)
         app.add_handler(admin_handler)
         app.add_handler(user_reg_handler)
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_products))
         
         print("🚀 Bot is Online!")
         app.run_polling()
