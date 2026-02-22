@@ -99,20 +99,42 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     if not url.startswith("https://banehstoore.ir"): return
     
-    msg = await update.message.reply_text("⏳ استخراج از میکسین...")
+    msg = await update.message.reply_text("⏳ استخراج قیمت واقعی از میکسین...")
     try:
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # استخراج هوشمند بر اساس متاتگ‌های میکسین
+        # ۱. استخراج نام و عکس (طبق متاتگ‌های استاندارد میکسین)
         title = soup.find("meta", property="og:title")["content"] if soup.find("meta", property="og:title") else soup.title.string
         img_url = soup.find("meta", property="og:image")["content"] if soup.find("meta", property="og:image") else None
         
-        # استخراج قیمت در میکسین (معمولا در کلاس price-value یا itemprop=price)
-        price_elem = soup.select_one('[itemprop="price"]') or soup.select_one('.price-value') or soup.select_one('.product-price')
-        price = price_elem.text.strip() if price_elem else "تماس بگیرید"
+        # ۲. استخراج هوشمند قیمت واقعی (تلاش برای چندین متد مختلف میکسین)
+        price = "تماس بگیرید"
         
-        # موجودی
+        # روش اول: جستجو در تگ‌های قیمت متداول میکسین
+        price_selectors = [
+            '.product-price-value', '.price-value', '.price-item', 
+            '.current-price', '[itemprop="price"]', '.product-price'
+        ]
+        
+        for selector in price_selectors:
+            element = soup.select_one(selector)
+            if element and element.text.strip():
+                price = element.text.strip()
+                break
+        
+        # روش دوم: اگر قیمت هنوز پیدا نشده، از متاتگ‌های قیمت استفاده کن
+        if price == "تماس بگیرید":
+            meta_price = soup.find("meta", property="product:price:amount") or \
+                         soup.find("meta", name="twitter:data1")
+            if meta_price:
+                price = meta_price.get("content") or meta_price.get("value")
+
+        # ۳. تمیز کردن عدد قیمت (حذف کلمات اضافی)
+        if price != "تماس بگیرید":
+            price = price.replace("قیمت:", "").replace("تومان", "").strip() + " تومان"
+        
+        # ۴. موجودی
         stock = "موجود در انبار ✅" if "موجود" in res.text else "ناموجود ❌"
 
         caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n📦 وضعیت: {stock}\n\n🔗 خرید از سایت 👇"
@@ -123,9 +145,10 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_photo(chat_id=CHANNEL_ID, photo=img_url, caption=caption, parse_mode='Markdown', reply_markup=keyboard)
         else:
             await context.bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode='Markdown', reply_markup=keyboard)
-        await msg.edit_text("✅ در کانال منتشر شد.")
+        
+        await msg.edit_text("✅ محصول با قیمت واقعی در کانال منتشر شد.")
     except Exception as e:
-        await msg.edit_text(f"❌ خطا: {str(e)}")
+        await msg.edit_text(f"❌ خطا در استخراج: {str(e)}")
 
 # --- ۵. اجرای نهایی ---
 if __name__ == '__main__':
