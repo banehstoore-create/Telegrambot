@@ -243,48 +243,47 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait = await update.message.reply_text(f"⏳ در حال آماده‌سازی پست محصول {product_id}...")
 
     try:
-        # فراخوانی API میکسین
         api_url = f"{SITE_URL}/api/management/v1/products/{product_id}/"
         res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         
         if res.status_code == 200:
             data = res.json()
             
-            # ۱. استخراج اطلاعات اصلی
+            # ۱. استخراج اطلاعات
             name = data.get('name', 'محصول جدید')
             price = data.get('price', 0)
             old_price = data.get('compare_at_price') 
             is_available = data.get('available', False)
             stock = data.get('stock', 0)
             
-            # ۲. مدیریت وضعیت موجودی و قیمت
+            # ۲. مدیریت وضعیت موجودی و قیمت (با تگ‌های HTML)
             status_text = f"✅ موجود در انبار ({stock} عدد)" if is_available else "❌ فعلاً ناموجود"
             formatted_price = "{:,} تومان".format(int(price)) if price else "تماس بگیرید"
             
-            price_section = f"💰 **قیمت:** {formatted_price}"
-            # نمایش قیمت قبلی در صورت وجود تخفیف
+            # استفاده از تگ <b> برای بولد و <s> برای خط زدن در HTML
+            price_section = f"💰 <b>قیمت:</b> {formatted_price}"
             if old_price and int(old_price) > int(price):
                 formatted_old = "{:,} تومان".format(int(old_price))
-                price_section = f"💰 **قیمت ویژه:** {formatted_price}\n❌ ~~قیمت قبل: {formatted_old}~~"
+                price_section = f"💰 <b>قیمت ویژه:</b> {formatted_price}\n❌ <s>قیمت قبل: {formatted_old}</s>"
 
-            # ۳. دریافت تصویر محصول
+            # ۳. دریافت تصویر
             page_res = requests.get(url, headers=HEADERS, timeout=10)
             soup = BeautifulSoup(page_res.text, 'html.parser')
             img_tag = soup.find("meta", attrs={"property": "og:image"})
             img_url = img_tag["content"] if img_tag else None
 
-            # ۴. ساخت متن نهایی (بدون مشخصات فنی)
+            # ۴. ساخت متن نهایی با فرمت HTML (بدون مشخصات فنی)
             caption = (
-                f"🛍 **{name}**\n\n"
+                f"🛍 <b>{name}</b>\n\n"
                 f"{price_section}\n"
-                f"📦 **وضعیت:** {status_text}\n\n"
+                f"📦 <b>وضعیت:</b> {status_text}\n\n"
                 f"🚚 ارسال سریع به سراسر کشور\n"
                 f"💎 ضمانت اصالت و سلامت کالا\n"
                 f"💳 پرداخت امن و مطمئن\n\n"
                 f"✨ #بانه_استور #خرید_آنلاین #لوازم_خانگی"
             )
 
-            # ۵. دکمه‌های شیشه‌ای
+            # ۵. دکمه‌ها
             keyboard = [
                 [InlineKeyboardButton("🛒 مشاهده و خرید از سایت", url=url)],
                 [InlineKeyboardButton("👨‍💻 مشاوره و فروش (تلگرام)", url="https://t.me/+989180514202")]
@@ -295,23 +294,23 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=CHANNEL_ID,
                     photo=img_url,
                     caption=caption,
-                    parse_mode='Markdown', 
+                    parse_mode='HTML', # تغییر به HTML برای رفع قطعی خطا
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             else:
                 await context.bot.send_message(
                     chat_id=CHANNEL_ID, 
                     text=caption, 
-                    parse_mode='Markdown', 
+                    parse_mode='HTML', 
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             
-            await wait.edit_text("✅ پست محصول با موفقیت در کانال منتشر شد.")
+            await wait.edit_text("✅ پست محصول با موفقیت و بدون خطا منتشر شد.")
         else:
-            await wait.edit_text("❌ خطا در دریافت اطلاعات از API سایت.")
+            await wait.edit_text("❌ خطا در دریافت اطلاعات از API.")
             
     except Exception as e:
-        await wait.edit_text(f"❌ خطای سیستمی: {str(e)}")
+        await wait.edit_text(f"❌ خطای مجدد: {str(e)}")
 
 async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
