@@ -39,6 +39,7 @@ def init_db():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        # ساخت جدول اگر وجود نداشته باشد
         cur.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -47,10 +48,21 @@ def init_db():
                 username TEXT
             )
         ''')
+        # اطمینان از وجود ستون username (اگر جدول از قبل بود اما این ستون را نداشت)
+        cur.execute('''
+            DO $$ 
+            BEGIN 
+                BEGIN
+                    ALTER TABLE users ADD COLUMN username TEXT;
+                EXCEPTION
+                    WHEN duplicate_column THEN RAISE NOTICE 'column username already exists';
+                END;
+            END $$;
+        ''')
         conn.commit()
         cur.close()
         conn.close()
-        print("✅ Database initialized successfully!")
+        print("✅ Database initialized and schema updated!")
     except Exception as e:
         print(f"❌ Database Init Error: {e}")
 
