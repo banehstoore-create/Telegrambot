@@ -51,7 +51,7 @@ CHANNEL_ID = "@banehstoore"
 SUPPORT_URL = "https://t.me/+989180514202"
 MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 
-# --- ۴. بخش پیگیری سفارش (اصلاح دقیق مبلغ و تاریخ) ---
+# --- ۴. بخش پیگیری سفارش (اصلاح نهایی برای مبلغ، تاریخ و آدرس) ---
 
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 لطفاً شماره سفارش خود را وارد کنید:")
@@ -59,19 +59,19 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
-    wait = await update.message.reply_text("⏳ در حال استخراج تمام جزئیات سفارش از سایت...")
+    wait = await update.message.reply_text("⏳ در حال دریافت جزئیات دقیق از سایت...")
     
-    # دیتابیس داخلی
+    # اولویت اول: دیتابیس محلی
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
         local_order = cur.fetchone(); cur.close(); conn.close()
         if local_order:
-            await wait.edit_text(f"📄 **جزئیات فاکتور (ادمین):**\n\n{local_order[0]}", parse_mode='Markdown')
+            await wait.edit_text(f"📄 **جزئیات فاکتور (ثبت دستی):**\n\n{local_order[0]}", parse_mode='Markdown')
             return ConversationHandler.END
     except: pass
 
-    # استعلام از API
+    # استعلام از API میکسین
     if MIXIN_API_KEY:
         try:
             api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
@@ -80,24 +80,29 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if res.status_code == 200:
                 data = res.json()
                 
-                # ۱. وضعیت با ترجمه ساده
+                # ۱. استخراج نام مشتری
+                cust = data.get('customer') or data.get('user') or {}
+                customer_name = f"{cust.get('first_name', '')} {cust.get('last_name', '')}".strip() or data.get('customer_display') or "نامشخص"
+
+                # ۲. استخراج وضعیت
                 raw_status = data.get('status_display') or data.get('status') or 'ثبت شده'
-                status_map = {"canceled": "❌ لغو شده", "pending": "⏳ در انتظار", "paid": "✅ پرداخت شده", "delivered": "🚚 تحویل شده"}
+                status_map = {"canceled": "❌ لغو شده", "pending": "⏳ در انتظار", "paid": "✅ پرداخت شده", "delivered": "🚚 ارسال شده"}
                 status = status_map.get(raw_status.lower(), raw_status)
 
-                # ۲. اصلاح مبلغ (تبدیل انواع فرمت‌ها به عدد)
-                raw_price = data.get('total_price') or data.get('payable_amount') or data.get('total') or 0
+                # ۳. استخراج هوشمند مبلغ (تست فیلدهای مختلف)
+                price_field = data.get('total_payable') or data.get('total_price') or data.get('payable_amount') or data.get('total') or 0
                 try:
-                    price_val = int(float(raw_price))
-                    total_price = "{:,} تومان".format(price_val) if price_val > 0 else "رایگان / نامشخص"
-                except:
-                    total_price = "نامشخص"
-                
-                # ۳. مشتری
-                cust = data.get('customer') or data.get('user') or {}
-                customer_name = f"{cust.get('first_name', '')} {cust.get('last_name', '')}".strip() or "نامشخص"
-                
-                # ۴. اقلام
+                    price_val = int(float(price_field))
+                    total_price = "{:,} تومان".format(price_val) if price_val > 0 else "نامشخص"
+                except: total_price = "نامشخص"
+
+                # ۴. استخراج آدرس
+                addr_data = data.get('address') or data.get('shipping_address') or {}
+                if isinstance(addr_data, dict):
+                    full_address = addr_data.get('full_address') or addr_data.get('address') or addr_data.get('text') or "ثبت نشده"
+                else: full_address = str(addr_data)
+
+                # ۵. لیست اقلام
                 items_text = ""
                 items = data.get('items') or data.get('order_items') or []
                 for idx, item in enumerate(items, 1):
@@ -106,16 +111,16 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     qty = item.get('quantity') or 1
                     items_text += f"{idx}. {name} (تعداد: {qty})\n"
 
-                # ۵. اصلاح تاریخ
-                raw_date = data.get('created_at_display') or data.get('created_at') or data.get('date_created') or 'نامشخص'
-                # حذف قسمت ساعت برای تمیزی بیشتر (اگر فرمت استاندارد باشد)
-                clean_date = raw_date.split('T')[0] if 'T' in raw_date else raw_date
+                # ۶. استخراج تاریخ
+                date = data.get('created_at_display') or data.get('created_at') or data.get('date_created') or "نامشخص"
+                clean_date = date.split('T')[0] if 'T' in date else date
 
                 msg = (
                     f"📦 **اطلاعات کامل سفارش {order_no}**\n\n"
                     f"👤 **تحویل گیرنده:** {customer_name}\n"
                     f"🚩 **وضعیت فعلی:** {status}\n"
-                    f"💰 **مبلغ کل سفارش:** {total_price}\n\n"
+                    f"💰 **مبلغ کل سفارش:** {total_price}\n"
+                    f"📍 **آدرس ارسال:** {full_address}\n\n"
                     f"📝 **لیست اقلام سفارش:**\n{items_text}\n"
                     f"📅 **تاریخ ثبت:** {clean_date}\n\n"
                     f"💡 برای پیگیری دقیق‌تر با پشتیبانی در ارتباط باشید."
@@ -127,7 +132,8 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد.")
     return ConversationHandler.END
 
-# --- بقیه توابع (بدون تغییر) ---
+# --- بقیه توابع (بدون هیچ تغییری مطابق دستور شما) ---
+
 async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:")
     return SEARCH_QUERY
