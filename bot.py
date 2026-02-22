@@ -102,49 +102,52 @@ async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query == "جستجوی محصول 🔍":
         await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:"); return
     
-    wait = await update.message.reply_text(f"⏳ در حال جستجوی جامع برای '{query}'...")
+    wait = await update.message.reply_text(f"⏳ در حال جستجوی '{query}'...")
     try:
-        # جستجو در کل سایت
+        # جستجوی مستقیم در سایت بانه استور
         search_url = f"https://banehstoore.ir/?s={query}"
-        res = requests.get(search_url, headers=HEADERS, timeout=20)
+        res = requests.get(search_url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
         kb, seen = [], set()
         
-        # پیدا کردن تمام محفظه‌های محصول (Product Containers)
-        # این بخش تمام محصولات مرتبط را پیدا می‌کند، حتی اگر اسمشان دقیقا مثل سرچ کاربر نباشد
-        products = soup.select('a[href*="/product/"]')
+        # تمرکز فقط روی کلاس‌های محصول در قالب میکسین/وردپرس
+        # این کار باعث می‌شود ربات لینک‌های متفرقه را بررسی نکند و سریع پاسخ دهد
+        products = soup.find_all('div', class_='product-inner') or soup.find_all('div', class_='product-item')
         
-        for item in products:
-            url = item['href']
-            # استخراج نام محصول از عنوان لینک یا تگ‌های داخلی مثل h2/h3
-            title = item.get_text().strip()
-            
-            # اگر عنوان خالی بود، از ویژگی title یا alt تصویر استفاده کن
-            if len(title) < 5:
-                inner_img = item.find('img')
-                if inner_img and inner_img.get('alt'):
-                    title = inner_img['alt'].strip()
+        # اگر کلاس‌های بالا یافت نشد، از روش جایگزین سریع استفاده کن
+        if not products:
+            products = soup.select('.product h2 a') or soup.select('.product-title a')
 
-            if url not in seen and len(title) > 3:
-                # فیلتر کلمات هرز و لینک‌های سیستمی
-                if not any(x in title for x in ["افزودن به سبد", "مقایسه", "انتخاب گزینه‌ها"]):
-                    kb.append([InlineKeyboardButton(f"📦 {title}", url=url)])
-                    seen.add(url)
-        
+        for item in products:
+            # پیدا کردن لینک و عنوان
+            link_tag = item if item.name == 'a' else item.find('a', href=True)
+            if not link_tag: continue
+            
+            url = link_tag['href']
+            title = link_tag.get_text().strip()
+            
+            # پاکسازی و فیلتر نتایج
+            if "/product/" in url and url not in seen and len(title) > 5:
+                # حذف کلمات اضافی برای تمیز شدن دکمه‌ها
+                clean_title = title.replace("مشاهده محصول", "").replace("انتخاب گزینه‌ها", "").strip()
+                kb.append([InlineKeyboardButton(f"📦 {clean_title}", url=url)])
+                seen.add(url)
+            
+            if len(kb) >= 10: break # محدود کردن به ۱۰ نتیجه برای سرعت حداکثری
+
         if kb:
             await wait.delete()
-            # نمایش نتایج (حداکثر ۲۰ مورد برای جلوگیری از سنگین شدن پیام)
             await update.message.reply_text(
-                f"✅ {len(kb)} محصول مرتبط با «{query}» یافت شد:", 
-                reply_markup=InlineKeyboardMarkup(kb[:20])
+                f"✅ نتایج یافت شده برای «{query}»:", 
+                reply_markup=InlineKeyboardMarkup(kb)
             )
         else:
-            await wait.edit_text(f"❌ محصولی برای عبارت «{query}» یافت نشد.\nلطفاً کلمات کلیدی دیگری را امتحان کنید (مثلاً: سرخ کن).")
+            await wait.edit_text(f"❌ محصولی برای «{query}» یافت نشد.\nلطفاً کلمه دیگری را امتحان کنید.")
+            
     except Exception as e:
-        print(f"Search Error: {e}")
-        await wait.edit_text("❌ خطا در برقراری ارتباط با سایت بانه استور. لطفاً لحظاتی دیگر تلاش کنید.")
-
+        print(f"Error: {e}")
+        await wait.edit_text("❌ متاسفانه در حال حاضر سایت پاسخگو نیست. لطفاً دوباره تلاش کنید.")
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text
