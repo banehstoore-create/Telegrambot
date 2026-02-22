@@ -30,17 +30,22 @@ def get_db_connection():
 
 def init_db():
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
+        conn = get_db_connection(); cur = conn.cursor()
         cur.execute('''CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY, full_name TEXT, phone_number TEXT, username TEXT)''')
-        conn.commit()
-        cur.close(); conn.close()
+            user_id BIGINT PRIMARY KEY, full_name TEXT, phone_number TEXT)''')
+        conn.commit(); cur.close(); conn.close()
     except Exception as e: print(f"❌ DB Error: {e}")
 
 # --- ۳. منطق ربات ---
 NAME, PHONE = range(2)
 ADMIN_PANEL, BROADCAST = range(3, 5)
+
+# تنظیم هدر ثابت برای دور زدن محدودیت‌ها
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'fa-IR,fa;q=0.9,en-US;q=0.8,en;q=0.7',
+}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -100,128 +105,103 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for u in users:
         try: await context.bot.copy_message(u[0], update.message.chat_id, update.message.message_id)
         except: pass
-    await update.message.reply_text("✅ پیام با موفقیت ارسال شد.")
+    await update.message.reply_text("✅ ارسال شد.")
     return ADMIN_PANEL
 
-# --- ۵. موتور جستجوی هوشمند ---
+# --- ۵. جستجو و انتشار محصول ---
+CHANNEL_ID = "@banehstoore"
+SUPPORT_URL = "https://t.me/+989180514202"
+
 async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
     if query == "جستجوی محصول 🔍":
-        await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:")
+        await update.message.reply_text("🔍 نام محصول را وارد کنید:")
         return
 
-    wait = await update.message.reply_text(f"⏳ در حال جستجوی تمامی نتایج برای '{query}'...")
+    wait = await update.message.reply_text(f"⏳ جستجوی '{query}'...")
     try:
-        url = f"https://banehstoore.ir/search/{query}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept-Language': 'fa-IR,fa;q=0.9'
-        }
-        res = requests.get(url, headers=headers, timeout=15)
-        res.encoding = 'utf-8'
+        # جستجو از طریق پارامتر استاندارد سئو بانه استور
+        res = requests.get(f"https://banehstoore.ir/search/{query}", headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # پیدا کردن کارت‌های محصول
+        # پیدا کردن کارت محصولات بر اساس ساختار سایت‌ساز
         items = soup.select(".product-box, .product-item, .product-card")
-        
-        # روش جایگزین اگر کلاس‌های بالا یافت نشد
         if not items:
-            items = [a.parent for a in soup.select('a[href*="/product/"]') if len(a.text.strip()) > 5]
+            items = [a.parent for a in soup.find_all('a', href=True) if "/product/" in a['href'] and len(a.text.strip()) > 5]
 
         if not items:
             await wait.edit_text(f"❌ محصولی با عنوان '{query}' یافت نشد.")
             return
 
-        kb = []
-        seen = set()
-
+        kb, seen = [], set()
         for it in items:
-            link_tag = it.find("a", href=True)
-            title_tag = it.find(["h2", "h3", "h1"]) or it.select_one(".title, .name, .product-title")
-            price_tag = it.select_one(".price-value, .product-price, [data-price]")
+            l_tag = it.find("a", href=True)
+            t_tag = it.find(["h2", "h3", "h1"]) or it.select_one(".title, .name")
+            p_tag = it.select_one(".price-value, .product-price") or it.find(attrs={"data-price": True})
             
-            if link_tag and title_tag:
-                title = title_tag.text.strip()
-                link = link_tag['href']
-                if not link.startswith("http"): link = "https://banehstoore.ir" + link
-                
+            if l_tag and t_tag:
+                link = "https://banehstoore.ir" + l_tag['href'] if not l_tag['href'].startswith("http") else l_tag['href']
                 if link not in seen:
-                    # پردازش قیمت (تقسیم بر ۱۰)
-                    price_text = "💰 مشاهده قیمت در سایت"
-                    if price_tag:
-                        # استخراج عدد از متن قیمت
-                        raw_p = "".join(filter(str.isdigit, price_tag.text))
-                        if raw_p:
-                            formatted_p = "{:,}".format(int(raw_p) // 10)
-                            price_text = f"💰 قیمت: {formatted_p} تومان"
+                    title = t_tag.text.strip()
+                    price = "💰 مشاهده در سایت"
+                    if p_tag:
+                        raw_p = "".join(filter(str.isdigit, p_tag.text))
+                        if raw_p: price = f"💰 قیمت: {'{:,}'.format(int(raw_p)//10)} تومان"
                     
-                    # اضافه کردن دکمه‌ها (نام در یک ردیف، قیمت در ردیف پایین)
                     kb.append([InlineKeyboardButton(f"📦 {title}", url=link)])
-                    kb.append([InlineKeyboardButton(f"└ {price_text}", url=link)])
+                    kb.append([InlineKeyboardButton(f"└ {price}", url=link)])
                     seen.add(link)
 
-        if kb:
-            await wait.delete()
-            # نمایش پیام نهایی با تمام نتایج
-            await update.message.reply_text(
-                f"✅ تعداد {len(seen)} مورد برای **{query}** یافت شد:\n(برای جزئیات روی محصول کلیک کنید)",
-                reply_markup=InlineKeyboardMarkup(kb),
-                parse_mode='Markdown'
-            )
-        else:
-            await wait.edit_text("❌ نتایج یافت شد اما استخراج اطلاعات ناموفق بود.")
-
-    except Exception as e:
-        print(f"Error: {e}")
-        await wait.edit_text("❌ خطا در اتصال به سایت یا پردازش اطلاعات.")
-
-# --- ۶. انتشار محصول (ادمین) ---
-CHANNEL_ID = "@banehstoore"
-SUPPORT_URL = "https://t.me/+989180514202"
+        await wait.delete()
+        await update.message.reply_text(f"✅ نتایج برای **{query}**:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    except: await wait.edit_text("❌ خطا در جستجو.")
 
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text
-    msg = await update.message.reply_text("⏳ استخراج و ارسال...")
+    msg = await update.message.reply_text("⏳ در حال پردازش لینک...")
     try:
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        res = requests.get(url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
-        title = soup.find("meta", attrs={"property": "og:title"})["content"]
-        img = soup.find("meta", attrs={"property": "og:image"})["content"]
         
-        p_elem = soup.find(attrs={"data-price": True}) or soup.find(attrs={"itemprop": "price"})
-        p_val = "".join(filter(str.isdigit, p_elem.get("data-price") or p_elem.text))
+        # استخراج هوشمند اطلاعات
+        title_meta = soup.find("meta", attrs={"property": "og:title"})
+        title = title_meta["content"] if title_meta else soup.find("h1").text.strip()
+        
+        img_meta = soup.find("meta", attrs={"property": "og:image"})
+        img = img_meta["content"] if img_meta else soup.find("img", {"src": True})["src"]
+        if img and not img.startswith("http"): img = "https://banehstoore.ir" + img
+
+        p_elem = soup.find(attrs={"data-price": True}) or soup.select_one(".product-price") or soup.find(attrs={"itemprop": "price"})
+        p_val = "".join(filter(str.isdigit, p_elem.text if p_elem else ""))
         price = "{:,} تومان".format(int(p_val)//10) if p_val else "تماس بگیرید"
 
-        caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n\n🔗 خرید مستقیم از سایت 👇"
+        caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n\n🔗 خرید مستقیم 👇"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛒 ثبت سفارش", url=url)], [InlineKeyboardButton("👨‍💻 پشتیبانی", url=SUPPORT_URL)]])
         await context.bot.send_photo(CHANNEL_ID, img, caption, parse_mode='Markdown', reply_markup=kb)
-        await msg.edit_text("✅ محصول در کانال منتشر شد.")
-    except: await msg.edit_text("❌ خطا در استخراج لینک محصول.")
+        await msg.edit_text("✅ در کانال منتشر شد.")
+    except Exception as e:
+        print(f"Post Error: {e}")
+        await msg.edit_text("❌ خطا در استخراج. مطمئن شوید لینک محصول صحیح است.")
 
-# --- ۷. اجرای نهایی ---
+# --- ۶. اجرا ---
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
     init_db()
     TOKEN = os.getenv('BOT_TOKEN')
     if TOKEN:
         app = ApplicationBuilder().token(TOKEN).build()
-        
-        # هندلرها
         app.add_handler(ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^ورود به پنل مدیریت ⚙️$"), admin_menu)],
             states={ADMIN_PANEL: [MessageHandler(filters.Regex("^آمار ربات 📊$"), bot_stats), MessageHandler(filters.Regex("^ارسال پیام همگانی 📢$"), pre_broadcast)],
                     BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, do_broadcast)]},
             fallbacks=[MessageHandler(filters.Regex("^خروج از پنل 🔙$"), start)], allow_reentry=True
         ))
-        
         app.add_handler(ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)], PHONE: [MessageHandler(filters.CONTACT, get_phone)]},
             fallbacks=[CommandHandler('start', start)], allow_reentry=True
         ))
-        
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_products))
-        
         app.run_polling()
