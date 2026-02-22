@@ -100,34 +100,50 @@ async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_T
 async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     if query == "جستجوی محصول 🔍":
-        await update.message.reply_text("🔍 نام محصول را وارد کنید:"); return
+        await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:"); return
     
-    wait = await update.message.reply_text(f"⏳ در حال جستجوی '{query}'...")
+    wait = await update.message.reply_text(f"⏳ در حال جستجوی جامع برای '{query}'...")
     try:
-        # استفاده از متد جستجوی مستقیم
+        # جستجو در کل سایت
         search_url = f"https://banehstoore.ir/?s={query}"
-        res = requests.get(search_url, headers=HEADERS, timeout=15)
+        res = requests.get(search_url, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(res.text, 'html.parser')
         
         kb, seen = [], set()
-        # جستجوی لینک‌های محصول در تگ‌های h2 و h3 (معمول در قالب‌های وردپرس/میکسین)
-        for link in soup.find_all('a', href=True):
-            text = link.get_text().strip()
-            href = link['href']
-            # فیلتر کردن لینک‌های تکراری و نامرتبط
-            if query.lower() in text.lower() and "/product/" in href:
-                url = href if href.startswith("http") else "https://banehstoore.ir" + href
-                if url not in seen and len(text) > 5:
-                    kb.append([InlineKeyboardButton(f"📦 {text}", url=url)])
+        
+        # پیدا کردن تمام محفظه‌های محصول (Product Containers)
+        # این بخش تمام محصولات مرتبط را پیدا می‌کند، حتی اگر اسمشان دقیقا مثل سرچ کاربر نباشد
+        products = soup.select('a[href*="/product/"]')
+        
+        for item in products:
+            url = item['href']
+            # استخراج نام محصول از عنوان لینک یا تگ‌های داخلی مثل h2/h3
+            title = item.get_text().strip()
+            
+            # اگر عنوان خالی بود، از ویژگی title یا alt تصویر استفاده کن
+            if len(title) < 5:
+                inner_img = item.find('img')
+                if inner_img and inner_img.get('alt'):
+                    title = inner_img['alt'].strip()
+
+            if url not in seen and len(title) > 3:
+                # فیلتر کلمات هرز و لینک‌های سیستمی
+                if not any(x in title for x in ["افزودن به سبد", "مقایسه", "انتخاب گزینه‌ها"]):
+                    kb.append([InlineKeyboardButton(f"📦 {title}", url=url)])
                     seen.add(url)
         
         if kb:
             await wait.delete()
-            await update.message.reply_text(f"✅ نتایج یافت شده برای {query}:", reply_markup=InlineKeyboardMarkup(kb[:15])) # محدود به ۱۵ نتیجه
+            # نمایش نتایج (حداکثر ۲۰ مورد برای جلوگیری از سنگین شدن پیام)
+            await update.message.reply_text(
+                f"✅ {len(kb)} محصول مرتبط با «{query}» یافت شد:", 
+                reply_markup=InlineKeyboardMarkup(kb[:20])
+            )
         else:
-            await wait.edit_text("❌ محصولی یافت نشد. لطفاً نام محصول را دقیق‌تر وارد کنید.")
-    except:
-        await wait.edit_text("❌ خطا در اتصال به سایت بانه استور.")
+            await wait.edit_text(f"❌ محصولی برای عبارت «{query}» یافت نشد.\nلطفاً کلمات کلیدی دیگری را امتحان کنید (مثلاً: سرخ کن).")
+    except Exception as e:
+        print(f"Search Error: {e}")
+        await wait.edit_text("❌ خطا در برقراری ارتباط با سایت بانه استور. لطفاً لحظاتی دیگر تلاش کنید.")
 
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
