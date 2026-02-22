@@ -232,65 +232,83 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text.strip()
-    wait = await update.message.reply_text("⏳ در حال آماده‌سازی پست حرفه‌ای برای کانال...")
     
+    # ۱. استخراج ID محصول از لینک (مثلاً از لینک /product/108/ عدد 108 را برمی‌دارد)
+    product_id_match = re.search(r'/product/(\d+)/', url)
+    if not product_id_match:
+        await update.message.reply_text("❌ لینک نامعتبر است. لطفاً لینک مستقیم محصول را بفرستید.")
+        return
+
+    product_id = product_id_match.group(1)
+    wait = await update.message.reply_text(f"⏳ در حال استخراج اطلاعات محصول {product_id} از میکسین...")
+
     try:
-        res = requests.get(url, headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(res.text, 'html.parser')
+        # ۲. فراخوانی API اطلاعات محصول طبق مستندات تصویر دوم
+        api_url = f"{SITE_URL}/api/management/v1/products/{product_id}/"
+        res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         
-        # ۱. استخراج نام محصول
-        title = (soup.find("meta", attrs={"property": "og:title"}) or soup.find("h1")).get("content", "محصول جدید بانه استور").strip()
-        
-        # ۲. استخراج تصویر
-        img_tag = soup.find("meta", attrs={"property": "og:image"})
-        img = img_tag["content"] if img_tag else None
-        
-        # ۳. تشخیص وضعیت موجودی
-        # این بخش بر اساس کلمات رایج در سایت‌های فروشگاهی تنظیم شده است
-        page_text = soup.get_text()
-        if "ناموجود" in page_text or "out of stock" in page_text.lower():
-            availability = "❌ فعلاً ناموجود"
-        else:
-            availability = "✅ موجود و آماده ارسال"
-
-        # ۴. متن پست (با کلمات کلیدی و جلب اعتماد)
-        caption = (
-            f"🛍 **{title}**\n\n"
-            f"🔹 وضعیت: {availability}\n"
-            f"🚚 ارسال سریع به سراسر کشور\n"
-            f"🛡 ضمانت اصالت و سلامت فیزیکی کالا\n"
-            f"💰 تضمین بهترین قیمت بازار\n\n"
-            f"✨ #بانه_استور #خرید_آنلاین #لوازم_خانگی #گارانتی\n\n"
-            f"🏁 برای مشاهده جزئیات بیشتر و ثبت سفارش از دکمه‌های زیر استفاده کنید: 👇"
-        )
-
-        # ۵. دکمه‌های شیشه‌ای
-        keyboard = [
-            [InlineKeyboardButton("🛒 خرید مستقیم از سایت", url=url)],
-            [InlineKeyboardButton("👨‍💻 پشتیبانی و مشاوره", url="https://t.me/+989180514202")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        if img:
-            await context.bot.send_photo(
-                chat_id=CHANNEL_ID,
-                photo=img,
-                caption=caption,
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=caption,
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
+        if res.status_code == 200:
+            data = res.json()
             
-        await wait.edit_text("✅ پست با موفقیت و ظاهر جدید در کانال منتشر شد.")
-    
+            # استخراج فیلدها طبق تصویر مستندات
+            name = data.get('name', 'محصول جدید')
+            price = data.get('price', 0)
+            is_available = data.get('available', False)
+            stock = data.get('stock', 0)
+            # تمیز کردن تگ‌های HTML از توضیحات
+            description = data.get('description', '')
+            clean_desc = re.sub('<[^<]+?>', '', description)[:150] + "..." 
+            
+            # وضعیت موجودی
+            status_text = f"✅ موجود در انبار ({stock} عدد)" if is_available else "❌ فعلاً ناموجود"
+            
+            # مبلغ فرمت شده
+            formatted_price = "{:,} تومان".format(int(price)) if price else "تماس بگیرید"
+
+            # ۳. دریافت عکس محصول (از متاتگ صفحه برای کیفیت بهتر)
+            page_res = requests.get(url, headers=HEADERS, timeout=10)
+            soup = BeautifulSoup(page_res.text, 'html.parser')
+            img_tag = soup.find("meta", attrs={"property": "og:image"})
+            img_url = img_tag["content"] if img_tag else None
+
+            # ۴. ساخت متن پست
+            caption = (
+                f"🛍 **{name}**\n\n"
+                f"💰 **قیمت:** {formatted_price}\n"
+                f"📦 **وضعیت:** {status_text}\n\n"
+                f"📝 **مشخصات فنی:**\n{clean_desc}\n\n"
+                f"🚚 ارسال سریع | 💎 ضمانت اصالت | 💳 پرداخت امن\n\n"
+                f"✨ #بانه_استور #خرید #لوازم_خانگی\n"
+            )
+
+            # ۵. دکمه‌های شیشه‌ای
+            keyboard = [
+                [InlineKeyboardButton("🛒 مشاهده و خرید از سایت", url=url)],
+                [InlineKeyboardButton("👨‍💻 مشاوره و فروش (تلگرام)", url="https://t.me/+989180514202")]
+            ]
+            
+            if img_url:
+                await context.bot.send_photo(
+                    chat_id=CHANNEL_ID,
+                    photo=img_url,
+                    caption=caption,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=caption,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            
+            await wait.edit_text("✅ محصول با اطلاعات دقیق API در کانال منتشر شد.")
+        else:
+            await wait.edit_text("❌ خطا در دریافت اطلاعات از API سایت.")
+            
     except Exception as e:
-        await wait.edit_text(f"❌ خطایی در انتشار پست رخ داد: {str(e)}")
+        await wait.edit_text(f"❌ خطا: {str(e)}")
 
 async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
