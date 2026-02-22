@@ -132,8 +132,12 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # حذف هر چیزی به جز اعداد
                 numeric_price = "".join(filter(str.isdigit, str(price)))
                 if numeric_price:
-                    price = "{:,}".format(int(numeric_price)) + " تومان"
-            except:
+                    # تبدیل به عدد، تقسیم بر ۱۰ و گرد کردن
+                    final_price = int(numeric_price) // 10
+                    # فرمت‌دهی با جداکننده هزارگان
+                    price = "{:,}".format(final_price) + " تومان"
+            except Exception as e:
+                print(f"Price calculation error: {e}")
                 pass
 
         # ۳. موجودی
