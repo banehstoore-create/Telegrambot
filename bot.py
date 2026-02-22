@@ -51,7 +51,7 @@ CHANNEL_ID = "@banehstoore"
 SUPPORT_URL = "https://t.me/+989180514202"
 MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 
-# --- ۴. بخش پیگیری سفارش (اصلاح نهایی برای مبلغ، تاریخ و آدرس) ---
+# --- ۴. بخش پیگیری سفارش (دقیقاً مطابق مستندات تصویر ارسالی) ---
 
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 لطفاً شماره سفارش خود را وارد کنید:")
@@ -59,9 +59,9 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
-    wait = await update.message.reply_text("⏳ در حال دریافت جزئیات دقیق از سایت...")
+    wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات از دیتابیس سایت...")
     
-    # اولویت اول: دیتابیس محلی
+    # چک کردن دیتابیس داخلی (طبق دستور شما دست نخورده)
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
@@ -71,7 +71,7 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
     except: pass
 
-    # استعلام از API میکسین
+    # استعلام از API با فیلدهای مستندات جدید
     if MIXIN_API_KEY:
         try:
             api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
@@ -80,48 +80,54 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if res.status_code == 200:
                 data = res.json()
                 
-                # ۱. استخراج نام مشتری
-                cust = data.get('customer') or data.get('user') or {}
-                customer_name = f"{cust.get('first_name', '')} {cust.get('last_name', '')}".strip() or data.get('customer_display') or "نامشخص"
+                # ۱. نام تحویل گیرنده (مطابق فیلدهای تصویر: first_name و last_name)
+                fname = data.get('first_name') or ""
+                lname = data.get('last_name') or ""
+                customer_full_name = f"{fname} {lname}".strip() or "نامشخص"
 
-                # ۲. استخراج وضعیت
-                raw_status = data.get('status_display') or data.get('status') or 'ثبت شده'
-                status_map = {"canceled": "❌ لغو شده", "pending": "⏳ در انتظار", "paid": "✅ پرداخت شده", "delivered": "🚚 ارسال شده"}
+                # ۲. وضعیت (مطابق فیلد status)
+                raw_status = data.get('status', 'pending')
+                status_map = {
+                    "pending": "⏳ در انتظار بررسی",
+                    "paid": "✅ پرداخت شده",
+                    "canceled": "❌ لغو شده",
+                    "preparing": "📦 در حال آماده‌سازی",
+                    "sent": "🚚 ارسال شده"
+                }
                 status = status_map.get(raw_status.lower(), raw_status)
 
-                # ۳. استخراج هوشمند مبلغ (تست فیلدهای مختلف)
-                price_field = data.get('total_payable') or data.get('total_price') or data.get('payable_amount') or data.get('total') or 0
+                # ۳. مبلغ نهایی (مطابق فیلد final_price در تصویر)
+                final_p = data.get('final_price', 0)
                 try:
-                    price_val = int(float(price_field))
-                    total_price = "{:,} تومان".format(price_val) if price_val > 0 else "نامشخص"
-                except: total_price = "نامشخص"
+                    price_formatted = "{:,} تومان".format(int(final_p)) if int(final_p) > 0 else "نامشخص"
+                except: price_formatted = "نامشخص"
 
-                # ۴. استخراج آدرس
-                addr_data = data.get('address') or data.get('shipping_address') or {}
-                if isinstance(addr_data, dict):
-                    full_address = addr_data.get('full_address') or addr_data.get('address') or addr_data.get('text') or "ثبت نشده"
-                else: full_address = str(addr_data)
+                # ۴. آدرس (مطابق فیلد shipping_address در تصویر)
+                address = data.get('shipping_address') or "ثبت نشده"
+                province = data.get('shipping_province') or ""
+                city = data.get('shipping_city') or ""
+                full_addr_text = f"{province}، {city}، {address}" if province else address
 
-                # ۵. لیست اقلام
+                # ۵. تاریخ (مطابق فیلد creation_date در تصویر)
+                raw_date = data.get('creation_date', 'نامشخص')
+                clean_date = raw_date.split('T')[0] if 'T' in raw_date else raw_date
+
+                # ۶. اقلام سفارش
                 items_text = ""
-                items = data.get('items') or data.get('order_items') or []
+                items = data.get('items', [])
                 for idx, item in enumerate(items, 1):
-                    p_info = item.get('product') or item
-                    name = p_info.get('title') or p_info.get('name') or 'محصول'
+                    # در API معمولاً داخل items فیلد product_title یا نام محصول هست
+                    p_name = item.get('product_title') or item.get('name') or "محصول"
                     qty = item.get('quantity') or 1
-                    items_text += f"{idx}. {name} (تعداد: {qty})\n"
-
-                # ۶. استخراج تاریخ
-                date = data.get('created_at_display') or data.get('created_at') or data.get('date_created') or "نامشخص"
-                clean_date = date.split('T')[0] if 'T' in date else date
+                    items_text += f"{idx}. {p_name} (تعداد: {qty})\n"
 
                 msg = (
                     f"📦 **اطلاعات کامل سفارش {order_no}**\n\n"
-                    f"👤 **تحویل گیرنده:** {customer_name}\n"
+                    f"👤 **تحویل گیرنده:** {customer_full_name}\n"
                     f"🚩 **وضعیت فعلی:** {status}\n"
-                    f"💰 **مبلغ کل سفارش:** {total_price}\n"
-                    f"📍 **آدرس ارسال:** {full_address}\n\n"
-                    f"📝 **لیست اقلام سفارش:**\n{items_text}\n"
+                    f"💰 **مبلغ کل سفارش:** {price_formatted}\n"
+                    f"📍 **آدرس ارسال:** {full_addr_text}\n\n"
+                    f"📝 **لیست اقلام سفارش:**\n{items_text if items_text else 'جزئیات کالا یافت نشد'}\n"
                     f"📅 **تاریخ ثبت:** {clean_date}\n\n"
                     f"💡 برای پیگیری دقیق‌تر با پشتیبانی در ارتباط باشید."
                 )
@@ -132,8 +138,7 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد.")
     return ConversationHandler.END
 
-# --- بقیه توابع (بدون هیچ تغییری مطابق دستور شما) ---
-
+# --- سایر بخش‌ها (بدون تغییر طبق دستور شما) ---
 async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 نام محصول مورد نظر را وارد کنید:")
     return SEARCH_QUERY
