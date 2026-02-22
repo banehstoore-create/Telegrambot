@@ -1,4 +1,5 @@
 import json
+import html
 import os
 import requests
 import psycopg2
@@ -233,55 +234,60 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text.strip()
     
-    # ۱. استخراج ID محصول از لینک (مثلاً از لینک /product/108/ عدد 108 را برمی‌دارد)
     product_id_match = re.search(r'/product/(\d+)/', url)
     if not product_id_match:
-        await update.message.reply_text("❌ لینک نامعتبر است. لطفاً لینک مستقیم محصول را بفرستید.")
+        await update.message.reply_text("❌ لینک نامعتبر است.")
         return
 
     product_id = product_id_match.group(1)
-    wait = await update.message.reply_text(f"⏳ در حال استخراج اطلاعات محصول {product_id} از میکسین...")
+    wait = await update.message.reply_text(f"⏳ در حال آماده‌سازی پست محصول {product_id}...")
 
     try:
-        # ۲. فراخوانی API اطلاعات محصول طبق مستندات تصویر دوم
         api_url = f"{SITE_URL}/api/management/v1/products/{product_id}/"
         res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         
         if res.status_code == 200:
             data = res.json()
             
-            # استخراج فیلدها طبق تصویر مستندات
+            # ۱. استخراج و پاکسازی نام و توضیحات
             name = data.get('name', 'محصول جدید')
             price = data.get('price', 0)
+            old_price = data.get('compare_at_price') # قیمت قبل تخفیف
             is_available = data.get('available', False)
             stock = data.get('stock', 0)
-            # تمیز کردن تگ‌های HTML از توضیحات
-            description = data.get('description', '')
-            clean_desc = re.sub('<[^<]+?>', '', description)[:150] + "..." 
             
-            # وضعیت موجودی
+            # پاکسازی توضیحات از تگ‌های HTML و کاراکترهای حساس تلگرام
+            description = data.get('description', '') or data.get('analysis', '')
+            clean_desc = re.sub('<[^<]+?>', '', description) # حذف تگ‌های HTML
+            clean_desc = clean_desc.replace('_', '\\_').replace('*', '\\*').replace('`', '\\`') # جلوگیری از خطای تلگرام
+            summary_desc = clean_desc[:200] + "..." if len(clean_desc) > 200 else clean_desc
+            
+            # ۲. وضعیت موجودی و قیمت
             status_text = f"✅ موجود در انبار ({stock} عدد)" if is_available else "❌ فعلاً ناموجود"
-            
-            # مبلغ فرمت شده
             formatted_price = "{:,} تومان".format(int(price)) if price else "تماس بگیرید"
+            
+            price_section = f"💰 **قیمت:** {formatted_price}"
+            if old_price and int(old_price) > int(price):
+                formatted_old = "{:,} تومان".format(int(old_price))
+                price_section = f"💰 **قیمت با تخفیف:** {formatted_price}\n<s>❌ قیمت قبل: {formatted_old}</s>"
 
-            # ۳. دریافت عکس محصول (از متاتگ صفحه برای کیفیت بهتر)
+            # ۳. دریافت تصویر
             page_res = requests.get(url, headers=HEADERS, timeout=10)
             soup = BeautifulSoup(page_res.text, 'html.parser')
             img_tag = soup.find("meta", attrs={"property": "og:image"})
             img_url = img_tag["content"] if img_tag else None
 
-            # ۴. ساخت متن پست
+            # ۴. ساخت متن نهایی (MarkdownV2 برای پایداری بیشتر)
             caption = (
                 f"🛍 **{name}**\n\n"
-                f"💰 **قیمت:** {formatted_price}\n"
+                f"{price_section}\n"
                 f"📦 **وضعیت:** {status_text}\n\n"
-                f"📝 **مشخصات فنی:**\n{clean_desc}\n\n"
+                f"📝 **مشخصات فنی:**\n{summary_desc}\n\n"
                 f"🚚 ارسال سریع | 💎 ضمانت اصالت | 💳 پرداخت امن\n\n"
-                f"✨ #بانه_استور #خرید #لوازم_خانگی\n"
+                f"✨ #بانه_استور #خرید #لوازم_خانگی"
             )
 
-            # ۵. دکمه‌های شیشه‌ای
+            # ۵. دکمه‌ها
             keyboard = [
                 [InlineKeyboardButton("🛒 مشاهده و خرید از سایت", url=url)],
                 [InlineKeyboardButton("👨‍💻 مشاوره و فروش (تلگرام)", url="https://t.me/+989180514202")]
@@ -292,23 +298,18 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=CHANNEL_ID,
                     photo=img_url,
                     caption=caption,
-                    parse_mode='Markdown',
+                    parse_mode='Markdown', # استفاده از Markdown ساده اما با متن پاکسازی شده
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             else:
-                await context.bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=caption,
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
+                await context.bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
             
-            await wait.edit_text("✅ محصول با اطلاعات دقیق API در کانال منتشر شد.")
+            await wait.edit_text("✅ پست اصلاح شد و در کانال منتشر گردید.")
         else:
-            await wait.edit_text("❌ خطا در دریافت اطلاعات از API سایت.")
+            await wait.edit_text("❌ خطا در دریافت اطلاعات از API.")
             
     except Exception as e:
-        await wait.edit_text(f"❌ خطا: {str(e)}")
+        await wait.edit_text(f"❌ خطای مجدد: {str(e)}")
 
 async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
