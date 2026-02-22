@@ -53,6 +53,8 @@ MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 
 # --- ۴. بخش پیگیری سفارش (نسخه نهایی با کد رهگیری پستی) ---
 
+# --- بخش پیگیری سفارش (نسخه نهایی + دکمه مستقیم سامانه پست) ---
+
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 لطفاً شماره سفارش خود را وارد کنید:")
     return TRACK_ORDER
@@ -61,6 +63,7 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
     wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات از بانه استور...")
     
+    # دیتابیس داخلی
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
@@ -78,12 +81,11 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if res.status_code == 200:
                 data = res.json()
                 
-                # ۱. نام مشتری
+                # استخراج اطلاعات طبق مستندات تصویر قبلی شما
                 fname = data.get('first_name', '')
                 lname = data.get('last_name', '')
                 customer_name = f"{fname} {lname}".strip() or "نامشخص"
 
-                # ۲. وضعیت
                 raw_status = data.get('status', 'pending')
                 status_map = {
                     "pending": "⏳ در انتظار بررسی",
@@ -94,26 +96,30 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 }
                 status = status_map.get(raw_status.lower(), raw_status)
 
-                # ۳. مبلغ نهایی
                 f_price = data.get('final_price')
                 try:
                     total_price = "{:,} تومان".format(int(f_price)) if f_price is not None else "نامشخص"
                 except: total_price = "نامشخص"
 
-                # ۴. آدرس
                 addr = data.get('shipping_address') or "ثبت نشده"
                 prov = data.get('shipping_province', '')
                 city = data.get('shipping_city', '')
                 full_address = f"{prov}، {city}، {addr}".strip('، ')
 
-                # ۵. کد رهگیری پستی (فیلد جدید طبق مستندات)
-                tracking_code = data.get('shipping_tracking_code') or "هنوز صادر نشده"
+                # کد رهگیری پستی
+                tracking_code = data.get('shipping_tracking_code')
+                
+                # ایجاد دکمه شیشه‌ای برای رهگیری پست
+                keyboard = []
+                if tracking_code and tracking_code != "null":
+                    post_url = f"https://tracking.post.ir/?id={tracking_code}"
+                    keyboard.append([InlineKeyboardButton("🔎 رهگیری مستقیم از سامانه پست", url=post_url)])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
-                # ۶. تاریخ
                 c_date = data.get('creation_date', 'نامشخص')
                 display_date = str(c_date).split('T')[0] if 'T' in str(c_date) else str(c_date)
 
-                # ۷. لیست اقلام
                 items_text = ""
                 items = data.get('items', [])
                 for idx, item in enumerate(items, 1):
@@ -127,12 +133,13 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🚩 **وضعیت فعلی:** {status}\n"
                     f"💰 **مبلغ کل سفارش:** {total_price}\n"
                     f"📍 **آدرس ارسال:** {full_address}\n"
-                    f"🆔 **کد رهگیری پستی:** `{tracking_code}`\n\n"
+                    f"🆔 **کد رهگیری پستی:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n"
                     f"📝 **لیست اقلام سفارش:**\n{items_text if items_text else 'جزئیات کالا یافت نشد'}\n"
                     f"📅 **تاریخ ثبت:** {display_date}\n\n"
                     f"💡 برای پیگیری دقیق‌تر با پشتیبانی در ارتباط باشید."
                 )
-                await wait.edit_text(msg, parse_mode='Markdown')
+                
+                await wait.edit_text(msg, parse_mode='Markdown', reply_markup=reply_markup)
                 return ConversationHandler.END
         except Exception as e: print(f"API Error: {e}")
 
