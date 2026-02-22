@@ -52,6 +52,18 @@ NAME, PHONE = range(2)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    admin_id = os.getenv('ADMIN_ID')
+
+    # اگر کاربر ادمین بود
+    if str(user_id) == admin_id:
+        keyboard = [["ورود به پنل مدیریت ⚙️"]]
+        await update.message.reply_text(
+            "سلام مدیر عزیز! به پنل فرماندهی خوش آمدید:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    # منطق قبلی برای کاربران عادی (بدون تغییر)
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -90,6 +102,58 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if admin_id: await context.bot.send_message(chat_id=admin_id, text=f"👤 مشتری: {full_name}\n📞 {phone}")
     except Exception as e: print(f"Save Error: {e}")
     return ConversationHandler.END
+
+# وضعیت‌های جدید برای پنل مدیریت
+ADMIN_PANEL, BROADCAST = range(3, 5)
+
+async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
+    
+    keyboard = [["آمار ربات 📊", "ارسال پیام همگانی 📢"], ["خروج از پنل 🔙"]]
+    await update.message.reply_text(
+        "پنل مدیریت فعال شد. یکی از گزینه‌ها را انتخاب کنید:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+    return ADMIN_PANEL
+
+async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        await update.message.reply_text(f"👥 تعداد کل کاربران ثبت‌نام شده: {count} نفر")
+    except Exception as e:
+        await update.message.reply_text(f"خطا در دریافت آمار: {e}")
+
+async def pre_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("لطفاً پیامی که می‌خواهید به همه کاربران ارسال شود را بفرستید (متن یا عکس):")
+    return BROADCAST
+
+async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT user_id FROM users")
+        users = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        success, fail = 0, 0
+        for user in users:
+            try:
+                await context.bot.copy_message(chat_id=user[0], from_chat_id=msg.chat_id, message_id=msg.message_id)
+                success += 1
+            except:
+                fail += 1
+        
+        await update.message.reply_text(f"✅ ارسال به پایان رسید.\nموفق: {success}\nناموفق (بلاک): {fail}")
+    except Exception as e:
+        await update.message.reply_text(f"خطا در ارسال: {e}")
+    return ADMIN_PANEL
 
 # --- ۴. استخراج محصول (مخصوص میکسین) ---
 CHANNEL_ID = "@banehstoore" 
@@ -159,6 +223,19 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ۵. اجرای نهایی ---
 if __name__ == '__main__':
+# هندلر مدیریت
+        admin_conv = ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex("^ورود به پنل مدیریت ⚙️$"), admin_menu)],
+            states={
+                ADMIN_PANEL: [
+                    MessageHandler(filters.Regex("^آمار ربات 📊$"), bot_stats),
+                    MessageHandler(filters.Regex("^ارسال پیام همگانی 📢$"), pre_broadcast),
+                ],
+                BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, do_broadcast)],
+            },
+            fallbacks=[MessageHandler(filters.Regex("^خروج از پنل 🔙$"), start)],
+        )
+        app.add_handler(admin_conv)
     Thread(target=run_flask, daemon=True).start()
     init_db()
     TOKEN = os.getenv('BOT_TOKEN')
