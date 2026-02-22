@@ -362,6 +362,7 @@ if __name__ == '__main__':
             states={SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search)]},
             fallbacks=[CommandHandler('start', start)], allow_reentry=True
         ))
+app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی محصولات$"), show_categories))
         app.add_handler(ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^پیگیری سفارش 📦$"), track_order_start)],
             states={TRACK_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_track_order)]},
