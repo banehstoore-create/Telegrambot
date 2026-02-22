@@ -1,3 +1,4 @@
+import json
 import os
 import requests
 import psycopg2
@@ -99,43 +100,45 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     if not url.startswith("https://banehstoore.ir"): return
     
-    msg = await update.message.reply_text("⏳ استخراج قیمت واقعی از میکسین...")
+    msg = await update.message.reply_text("⏳ در حال استخراج قیمت هوشمند...")
     try:
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # ۱. استخراج نام و عکس (طبق متاتگ‌های استاندارد میکسین)
+        # استخراج نام و عکس
         title = soup.find("meta", property="og:title")["content"] if soup.find("meta", property="og:title") else soup.title.string
         img_url = soup.find("meta", property="og:image")["content"] if soup.find("meta", property="og:image") else None
         
-        # ۲. استخراج هوشمند قیمت واقعی (تلاش برای چندین متد مختلف میکسین)
+        # --- استخراج قیمت به روش JSON-LD (مخصوص سایت‌های مدرن و میکسین) ---
         price = "تماس بگیرید"
-        
-        # روش اول: جستجو در تگ‌های قیمت متداول میکسین
-        price_selectors = [
-            '.product-price-value', '.price-value', '.price-item', 
-            '.current-price', '[itemprop="price"]', '.product-price'
-        ]
-        
-        for selector in price_selectors:
-            element = soup.select_one(selector)
-            if element and element.text.strip():
-                price = element.text.strip()
-                break
-        
-        # روش دوم: اگر قیمت هنوز پیدا نشده، از متاتگ‌های قیمت استفاده کن
-        if price == "تماس بگیرید":
-            meta_price = soup.find("meta", property="product:price:amount") or \
-                         soup.find("meta", name="twitter:data1")
-            if meta_price:
-                price = meta_price.get("content") or meta_price.get("value")
+        try:
+            # جستجو در اسکریپت‌های مخصوص گوگل (Schema.org)
+            json_ld = soup.find_all('script', type='application/ld+json')
+            for script in json_ld:
+                data = json.loads(script.string)
+                # اگر لیست بود یا دیکشنری
+                items = data if isinstance(data, list) else [data]
+                for item in items:
+                    if item.get("@type") == "Product" or "offers" in item:
+                        offers = item.get("offers")
+                        if isinstance(offers, dict):
+                            price = offers.get("price")
+                        elif isinstance(offers, list):
+                            price = offers[0].get("price")
+                        break
+        except:
+            pass
 
-        # ۳. تمیز کردن عدد قیمت (حذف کلمات اضافی)
-        if price != "تماس بگیرید":
-            price = price.replace("قیمت:", "").replace("تومان", "").strip() + " تومان"
+        # اگر قیمت پیدا شد، فرمت‌بندی کن
+        if price and price != "تماس بگیرید":
+            try:
+                # جدا کردن سه رقم سه رقم برای زیبایی
+                price = "{:,}".format(int(float(price))) + " تومان"
+            except:
+                price = str(price) + " تومان"
         
-        # ۴. موجودی
-        stock = "موجود در انبار ✅" if "موجود" in res.text else "ناموجود ❌"
+        # موجودی
+        stock = "موجود در انبار ✅" if "InStock" in res.text or "موجود" in res.text else "ناموجود ❌"
 
         caption = f"🛍 **{title}**\n\n💰 قیمت: {price}\n📦 وضعیت: {stock}\n\n🔗 خرید از سایت 👇"
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🛒 ثبت سفارش و خرید", url=url)],
@@ -146,10 +149,9 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await context.bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode='Markdown', reply_markup=keyboard)
         
-        await msg.edit_text("✅ محصول با قیمت واقعی در کانال منتشر شد.")
+        await msg.delete() # حذف پیام در حال استخراج
     except Exception as e:
-        await msg.edit_text(f"❌ خطا در استخراج: {str(e)}")
-
+        await msg.edit_text(f"❌ خطا: {str(e)}")
 # --- ۵. اجرای نهایی ---
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
