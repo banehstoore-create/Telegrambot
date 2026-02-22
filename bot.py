@@ -132,6 +132,84 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END
 
+import requests
+from bs4 import BeautifulSoup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+# تنظیمات کانال و پشتیبانی
+CHANNEL_ID = "@YourChannelID"  # آیدی کانال خود را اینجا وارد کنید (مثلا @banehstore_chanel)
+SUPPORT_URL = "https://t.me/+989180514202"
+
+async def post_product_to_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # چک کردن اینکه فقط ادمین بتواند لینک بفرستد (اختیاری)
+    if str(update.effective_user.id) != os.getenv('ADMIN_ID'):
+        return
+
+    url = update.message.text
+    if not url.startswith("https://banehstoore.ir"):
+        return
+
+    status_msg = await update.message.reply_text("⏳ در حال دریافت اطلاعات محصول از سایت...")
+
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=15)
+        response.encoding = 'utf-8'
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # استخراج نام محصول
+        title = soup.find("h1", class_="product_title").text.strip()
+        
+        # استخراج قیمت (با فرمت ووکامرس)
+        price_tag = soup.find("p", class_="price")
+        price = price_tag.get_text(separator=" ").strip() if price_tag else "تماس بگیرید"
+        
+        # استخراج وضعیت موجودی
+        stock_tag = soup.find("p", class_="stock")
+        stock = stock_tag.text.strip() if stock_tag else "موجود در انبار"
+
+        # استخراج تصویر اصلی محصول
+        img_tag = soup.select_one(".woocommerce-product-gallery__image img, .wp-post-image")
+        img_url = img_tag['src'] if img_tag else None
+
+        # متن پیام کانال
+        caption = (
+            f"🛍 **{title}**\n\n"
+            f"💰 قیمت: {price}\n"
+            f"📦 وضعیت: {stock}\n\n"
+            f"🔗 مشاهده جزئیات بیشتر در سایت ما 👇"
+        )
+
+        # دکمه‌های شیشه‌ای
+        keyboard = [
+            [InlineKeyboardButton("🛒 ثبت سفارش و خرید", url=url)],
+            [InlineKeyboardButton("👨‍💻 پشتیبانی و مشاوره", url=SUPPORT_URL)]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # ارسال به کانال
+        if img_url:
+            await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=img_url,
+                caption=caption,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=caption,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+
+        await status_msg.edit_text("✅ محصول با موفقیت در کانال منتشر شد.")
+
+    except Exception as e:
+        print(f"Scraping Error: {e}")
+        await status_msg.edit_text(f"❌ خطایی در استخراج اطلاعات رخ داد. \nارور: {str(e)}")
+
 # --- ۴. اجرای نهایی ---
 if __name__ == '__main__':
     # بیدار نگه داشتن وب‌سرور
@@ -154,4 +232,6 @@ if __name__ == '__main__':
         )
         app.add_handler(conv)
         print("🚀 Bot is running...")
+# تشخیص لینک‌های سایت و ارسال به کانال
+        app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product_to_channel))
         app.run_polling()
