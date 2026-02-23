@@ -132,54 +132,54 @@ async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END 
 
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wait = await update.message.reply_text("⏳ در حال دریافت لیست دسته‌بندی‌ها...")
+    wait = await update.message.reply_text("⏳ در حال عیب‌یابی لیست دسته‌بندی‌ها...")
     try:
         api_url = f"{SITE_URL}/api/management/v1/categories/"
         res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         
         if res.status_code == 200:
             data = res.json()
-            # استخراج لیست از کلید results
-            categories = data.get('results', [])
             
-            # بخش عیب‌یابی: اگر لیست خالی بود، کل پاسخ را نشان بده
-            if not categories:
-                await wait.edit_text(
-                    f"📂 لیست دسته‌بندی‌ها در نتایج (results) یافت نشد.\n\n"
-                    f"🔍 **پاسخ دریافت شده از سرور:**\n<code>{json.dumps(data, indent=2, ensure_ascii=False)}</code>",
-                    parse_mode='HTML'
-                )
-                return
+            # اگر دیتایی وجود دارد اما در results نیست
+            if isinstance(data, dict):
+                keys_found = list(data.keys())
+                # اگر لیست مستقیم در خود ریشه باشد (بدون results)
+                categories = data.get('results', []) if 'results' in data else []
+                
+                if not categories:
+                    await wait.edit_text(
+                        f"📂 کلید results یافت نشد یا خالی است.\n"
+                        f"🔑 **کلیدهای موجود در پاسخ سرور:**\n`{', '.join(keys_found)}`"
+                    )
+                    return
+            
+            # اگر لیست مستقیم بود (لیستی از دیکشنری‌ها)
+            elif isinstance(data, list):
+                categories = data
+            else:
+                categories = []
 
-            keyboard = []
-            temp_row = []
-            
+            # ساخت دکمه‌ها
+            keyboard, temp_row = [], []
             for cat in categories:
                 c_id = cat.get('id')
                 c_name = cat.get('name', 'دسته')
                 safe_name = quote(c_name.replace(" ", "-"))
                 cat_url = f"{SITE_URL}/category/{c_id}/{safe_name}/"
-                
                 temp_row.append(InlineKeyboardButton(c_name, url=cat_url))
-                
                 if len(temp_row) == 2:
-                    keyboard.append(temp_row)
-                    temp_row = []
+                    keyboard.append(temp_row); temp_row = []
             
-            if temp_row:
-                keyboard.append(temp_row)
+            if temp_row: keyboard.append(temp_row)
             
             await wait.delete()
-            await update.message.reply_text(
-                "🗂 **دسته‌بندی محصولات بانه استور**\n\nلطفاً یک دسته را انتخاب کنید:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
+            await update.message.reply_text("🗂 **دسته‌بندی‌های یافت شده:**", reply_markup=InlineKeyboardMarkup(keyboard))
+            
         else:
-            await wait.edit_text(f"❌ خطا در اتصال به API (کد وضعیت: {res.status_code})")
+            await wait.edit_text(f"❌ خطا: {res.status_code}")
             
     except Exception as e:
-        await wait.edit_text(f"❌ خطای فنی: {str(e)}")
+        await wait.edit_text(f"❌ خطای مجدد: {str(e)[:100]}")
 
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
