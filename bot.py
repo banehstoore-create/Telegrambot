@@ -185,12 +185,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = os.getenv('ADMIN_ID')
     main_kb = [["جستجوی محصول 🔍", "پیگیری سفارش 📦"], ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"]]
     if str(user_id) == admin_id: main_kb.insert(0, ["ورود به پنل مدیریت ⚙️"])
+    
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
-    user = cur.fetchone(); cur.close(); conn.close()
-    if user or str(user_id) == admin_id:
-        await update.message.reply_text("به ربات بانه استور خوش آمدید:", reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
+    user_row = cur.fetchone(); cur.close(); conn.close()
+    
+    if user_row or str(user_id) == admin_id:
+        # استخراج نام از ردیف دیتابیس، اگر موجود نبود از کلمه مشتری عزیز استفاده می‌شود
+        user_name = user_row[0] if user_row else "مشتری عزیز"
+        await update.message.reply_text(
+            f"سلام {user_name} عزیز، به ربات بانه استور خوش آمدید:", 
+            reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True)
+        )
         return ConversationHandler.END
+        
     await update.message.reply_text("سلام! نام و نام خانوادگی خود را وارد کنید:")
     return NAME
 
