@@ -190,9 +190,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
     user_row = cur.fetchone(); cur.close(); conn.close()
     
+    # اگر کاربر قبلاً ثبت‌نام کرده باشد یا ادمین باشد
     if user_row or str(user_id) == admin_id:
-        # استخراج نام از ردیف دیتابیس، اگر موجود نبود از کلمه مشتری عزیز استفاده می‌شود
-        user_name = user_row[0] if user_row else "مشتری عزیز"
+        user_name = user_row[0] if user_row else "مدیریت عزیز"
         await update.message.reply_text(
             f"سلام {user_name} عزیز، به ربات بانه استور خوش آمدید:", 
             reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True)
@@ -211,10 +211,34 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.contact: return PHONE
     user_id, phone, name = update.effective_user.id, update.message.contact.phone_number, context.user_data.get('full_name')
+    
+    # ۱. ذخیره اطلاعات در دیتابیس
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO users (user_id, full_name, phone_number) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (user_id, name, phone))
     conn.commit(); cur.close(); conn.close()
-    await update.message.reply_text("✅ ثبت‌نام موفق!", reply_markup=ReplyKeyboardMarkup([["جستجوی محصول 🔍", "پیگیری سفارش 📦"]], resize_keyboard=True))
+    
+    # ۲. اطلاع‌رسانی فوری به ادمین
+    admin_id = os.getenv('ADMIN_ID')
+    if admin_id:
+        admin_alert = (
+            f"🆕 **کاربر جدید ثبت‌نام کرد!**\n\n"
+            f"👤 نام: {name}\n"
+            f"📞 شماره: `{phone}`\n"
+            f"🆔 آیدی تلگرام: `{user_id}`"
+        )
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=admin_alert, parse_mode='Markdown')
+        except Exception as e:
+            print(f"Error alerting admin: {e}")
+
+    # ۳. پیام نهایی به کاربر
+    await update.message.reply_text(
+        f"✅ {name} عزیز، ثبت‌نام شما با موفقیت انجام شد!", 
+        reply_markup=ReplyKeyboardMarkup([
+            ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
+            ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"]
+        ], resize_keyboard=True)
+    )
     return ConversationHandler.END
 
 # --- ۷. پنل ادمین و انتشار محصول ---
