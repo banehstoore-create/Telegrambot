@@ -132,18 +132,19 @@ async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END 
 
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wait = await update.message.reply_text("⏳ در حال دریافت لیست دسته‌بندی‌ها از بانه استور...")
+    wait = await update.message.reply_text("⏳ در حال دریافت لیست دسته‌بندی‌ها...")
     try:
+        # فراخوانی API میکسین
         api_url = f"{SITE_URL}/api/management/v1/categories/"
         res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         
         if res.status_code == 200:
             data = res.json()
-            # طبق خروجی ارسالی شما، لیست اصلی در کلید 'results' قرار دارد
+            # استخراج لیست از کلید results طبق مستنداتی که فرستادید
             categories = data.get('results', [])
             
             if not categories:
-                await wait.edit_text("📂 لیستی برای نمایش یافت نشد.")
+                await wait.edit_text("📂 دسته‌بندی خاصی یافت نشد.")
                 return
 
             keyboard = []
@@ -153,14 +154,17 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 c_id = cat.get('id')
                 c_name = cat.get('name', 'دسته')
                 
-                # ساخت لینک استاندارد بر اساس نمونه شما
-                # https://banehstoore.ir/category/1/موبایل-و-تبلت/
+                # اصلاح نام برای لینک (جایگزینی فاصله با خط تیره)
+                # و انکود کردن برای جلوگیری از خرابی کاراکترهای فارسی
                 safe_name = quote(c_name.replace(" ", "-"))
+                
+                # ساخت لینک دقیق مشابه نمونه ارسالی شما:
+                # https://banehstoore.ir/category/29/لوازم-خانگی-و-آشپزخانه/
                 cat_url = f"{SITE_URL}/category/{c_id}/{safe_name}/"
                 
                 temp_row.append(InlineKeyboardButton(c_name, url=cat_url))
                 
-                # نمایش ۲ دکمه در هر ردیف
+                # چیدمان ۲ دکمه در هر ردیف
                 if len(temp_row) == 2:
                     keyboard.append(temp_row)
                     temp_row = []
@@ -170,15 +174,15 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await wait.delete()
             await update.message.reply_text(
-                "🗂 **دسته‌بندی محصولات بانه استور:**\nلطفاً برای مشاهده محصولات، یکی از موارد زیر را انتخاب کنید:",
+                "🗂 **دسته‌بندی محصولات بانه استور:**\n\nبرای مشاهده محصولات هر دسته، روی دکمه مربوطه کلیک کنید:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
         else:
-            await wait.edit_text(f"❌ خطا در ارتباط با سرور (کد: {res.status_code})")
+            await wait.edit_text(f"❌ خطا در دریافت اطلاعات (کد خطا: {res.status_code})")
             
     except Exception as e:
-        await wait.edit_text(f"❌ خطای غیرمنتظره: {str(e)}")
+        await wait.edit_text(f"❌ خطای غیرمنتظره در نمایش دسته‌بندی‌ها: {str(e)}")
 
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
