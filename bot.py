@@ -132,50 +132,53 @@ async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END 
 
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wait = await update.message.reply_text("⏳ در حال دریافت لیست دسته‌بندی‌ها...")
-    
+    wait = await update.message.reply_text("⏳ در حال دریافت لیست دسته‌بندی‌ها از بانه استور...")
     try:
         api_url = f"{SITE_URL}/api/management/v1/categories/"
         res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         
         if res.status_code == 200:
-            categories = res.json()
+            data = res.json()
+            # طبق خروجی ارسالی شما، لیست اصلی در کلید 'results' قرار دارد
+            categories = data.get('results', [])
+            
+            if not categories:
+                await wait.edit_text("📂 لیستی برای نمایش یافت نشد.")
+                return
+
             keyboard = []
             temp_row = []
             
             for cat in categories:
-                if isinstance(cat, dict):
-                    cat_id = cat.get('id')
-                    cat_name = cat.get('name', 'دسته‌بندی')
-                    
-                    # ساخت لینک دقیق مشابه نمونه ارسالی شما:
-                    # https://banehstoore.ir/category/29/لوازم-خانگی-و-آشپزخانه/
-                    # از quote استفاده می‌کنیم تا کاراکترهای فارسی در لینک سالم بمانند
-                    safe_name = quote(cat_name.replace(" ", "-"))
-                    cat_url = f"{SITE_URL}/category/{cat_id}/{safe_name}/"
-                    
-                    temp_row.append(InlineKeyboardButton(cat_name, url=cat_url))
+                c_id = cat.get('id')
+                c_name = cat.get('name', 'دسته')
                 
+                # ساخت لینک استاندارد بر اساس نمونه شما
+                # https://banehstoore.ir/category/1/موبایل-و-تبلت/
+                safe_name = quote(c_name.replace(" ", "-"))
+                cat_url = f"{SITE_URL}/category/{c_id}/{safe_name}/"
+                
+                temp_row.append(InlineKeyboardButton(c_name, url=cat_url))
+                
+                # نمایش ۲ دکمه در هر ردیف
                 if len(temp_row) == 2:
                     keyboard.append(temp_row)
                     temp_row = []
             
             if temp_row:
                 keyboard.append(temp_row)
-
-            keyboard.append([InlineKeyboardButton("🌐 مشاهده همه در سایت", url=f"{SITE_URL}/categories/")])
             
             await wait.delete()
             await update.message.reply_text(
-                "🗂 **دسته‌بندی محصولات بانه استور:**\nلطفاً دسته‌بندی مورد نظر خود را انتخاب کنید:",
+                "🗂 **دسته‌بندی محصولات بانه استور:**\nلطفاً برای مشاهده محصولات، یکی از موارد زیر را انتخاب کنید:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
         else:
-            await wait.edit_text("❌ خطا در دریافت لیست. مطمئن شوید API میکسین خروجی ID و Name را دارد.")
+            await wait.edit_text(f"❌ خطا در ارتباط با سرور (کد: {res.status_code})")
             
     except Exception as e:
-        await wait.edit_text(f"❌ خطای سیستمی: {str(e)}")
+        await wait.edit_text(f"❌ خطای غیرمنتظره: {str(e)}")
 
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
