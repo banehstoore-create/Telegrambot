@@ -131,8 +131,49 @@ async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [[InlineKeyboardButton("🌐 مشاهده لیست تمامی دسته‌ها در سایت", url=f"{SITE_URL}/categories/")]]
-    await update.message.reply_text("📂 لیست کامل دسته‌بندی محصولات بانه استور:", reply_markup=InlineKeyboardMarkup(kb))
+    wait = await update.message.reply_text("⏳ در حال دریافت لیست دسته‌بندی‌ها...")
+    
+    try:
+        # فراخوانی API طبق مستندات میکسین
+        api_url = f"{SITE_URL}/api/management/v1/categories/"
+        res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
+        
+        if res.status_code == 200:
+            categories = res.json() # فرض بر این است که خروجی یک لیست از دسته‌هاست
+            keyboard = []
+            
+            # ساخت دکمه برای هر دسته‌بندی
+            # هر ردیف ۲ دکمه برای ظاهر بهتر
+            temp_row = []
+            for cat in categories:
+                cat_name = cat.get('name', 'دسته‌بندی')
+                cat_slug = cat.get('slug', '')
+                # لینک مستقیم به صفحه دسته بندی در سایت
+                cat_url = f"{SITE_URL}/categories/{cat_slug}/"
+                
+                temp_row.append(InlineKeyboardButton(cat_name, url=cat_url))
+                
+                if len(temp_row) == 2:
+                    keyboard.append(temp_row)
+                    temp_row = []
+            
+            if temp_row: # اضافه کردن دکمه باقی‌مانده
+                keyboard.append(temp_row)
+
+            # اضافه کردن دکمه مشاهده همه در انتها
+            keyboard.append([InlineKeyboardButton("🌐 مشاهده همه در سایت", url=f"{SITE_URL}/categories/")])
+            
+            await wait.delete()
+            await update.message.reply_text(
+                "🗂 **دسته‌بندی محصولات بانه استور:**\nلطفاً دسته‌بندی مورد نظر خود را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        else:
+            await wait.edit_text("❌ خطا در دریافت لیست دسته‌بندی‌ها از سرور.")
+            
+    except Exception as e:
+        await wait.edit_text(f"❌ خطای سیستمی: {str(e)}")
 
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
