@@ -60,7 +60,7 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
-    wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات و فاکتور از بانه استور...")
+    wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات از بانه استور...")
     
     try:
         conn = get_db_connection(); cur = conn.cursor()
@@ -90,25 +90,17 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     p_name = item.get('product_title') or item.get('name') or "محصول"
                     items_text += f"{idx}. {p_name} (تعداد: {item.get('quantity', 1)})\n"
 
-                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n👤 **تحویل گیرنده:** {customer_name}\n🚩 **وضعیت:** {status}\n💰 **مبلغ:** {total_price}\n📍 **آدرس:** {full_address}\n🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n📝 **اقلام:**\n{items_text}")
-                
                 invoice_url = f"{SITE_URL}/invoice/{order_no}/"
-                screenshot_api = f"https://image.thum.io/get/width/1200/crop/800/noanimate/{invoice_url}"
-                
-                await wait.delete()
-                try:
-                    await context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        photo=screenshot_api,
-                        caption=msg + f"\n\n🔗 [مشاهده فاکتور در سایت]({invoice_url})",
-                        parse_mode='Markdown'
-                    )
-                except:
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=msg + f"\n\n🔗 **لینک فاکتور:**\n{invoice_url}",
-                        parse_mode='Markdown'
-                    )
+                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n"
+                       f"👤 **تحویل گیرنده:** {customer_name}\n"
+                       f"🚩 **وضعیت:** {status}\n"
+                       f"💰 **مبلغ:** {total_price}\n"
+                       f"📍 **آدرس:** {full_address}\n"
+                       f"🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n"
+                       f"📝 **اقلام:**\n{items_text}\n"
+                       f"🔗 [مشاهده فاکتور در سایت]({invoice_url})")
+
+                await wait.edit_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
                 return ConversationHandler.END
         except Exception as e: print(f"API Error: {e}")
 
