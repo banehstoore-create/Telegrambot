@@ -3,6 +3,7 @@ import os
 import requests
 import psycopg2
 import re
+from urllib.parse import quote
 from threading import Thread
 from flask import Flask
 from bs4 import BeautifulSoup
@@ -128,7 +129,7 @@ async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ نتایج یافت شده:", reply_markup=InlineKeyboardMarkup(kb))
         else: await wait.edit_text(f"❌ محصولی پیدا نشد.")
     except: await wait.edit_text("❌ خطا در اتصال به سایت.")
-    return ConversationHandler.END
+    return ConversationHandler.END 
 
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait = await update.message.reply_text("⏳ در حال دریافت لیست دسته‌بندی‌ها...")
@@ -143,19 +144,17 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
             temp_row = []
             
             for cat in categories:
-                # بررسی نوع داده برای جلوگیری از خطای 'str' object has no attribute 'get'
                 if isinstance(cat, dict):
+                    cat_id = cat.get('id')
                     cat_name = cat.get('name', 'دسته‌بندی')
-                    cat_slug = cat.get('slug', '')
-                else:
-                    # اگر خروجی فقط لیستی از نام‌ها باشد
-                    cat_name = str(cat)
-                    cat_slug = str(cat)
-
-                # اصلاح لینک: اگر اسلاگ فارسی باشد، انکود می‌شود
-                cat_url = f"{SITE_URL}/categories/{cat_slug}/"
-                
-                temp_row.append(InlineKeyboardButton(cat_name, url=cat_url))
+                    
+                    # ساخت لینک دقیق مشابه نمونه ارسالی شما:
+                    # https://banehstoore.ir/category/29/لوازم-خانگی-و-آشپزخانه/
+                    # از quote استفاده می‌کنیم تا کاراکترهای فارسی در لینک سالم بمانند
+                    safe_name = quote(cat_name.replace(" ", "-"))
+                    cat_url = f"{SITE_URL}/category/{cat_id}/{safe_name}/"
+                    
+                    temp_row.append(InlineKeyboardButton(cat_name, url=cat_url))
                 
                 if len(temp_row) == 2:
                     keyboard.append(temp_row)
@@ -168,15 +167,15 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await wait.delete()
             await update.message.reply_text(
-                "🗂 **دسته‌بندی محصولات بانه استور:**\nلطفاً دسته‌بندی مورد نظر را انتخاب کنید:",
+                "🗂 **دسته‌بندی محصولات بانه استور:**\nلطفاً دسته‌بندی مورد نظر خود را انتخاب کنید:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
         else:
-            await wait.edit_text("❌ خطا در دریافت لیست از سرور. لطفاً وضعیت API را بررسی کنید.")
+            await wait.edit_text("❌ خطا در دریافت لیست. مطمئن شوید API میکسین خروجی ID و Name را دارد.")
             
     except Exception as e:
-        await wait.edit_text(f"❌ خطای غیرمنتظره: {str(e)}")
+        await wait.edit_text(f"❌ خطای سیستمی: {str(e)}")
 
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
