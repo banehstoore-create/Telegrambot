@@ -92,15 +92,26 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n👤 **تحویل گیرنده:** {customer_name}\n🚩 **وضعیت:** {status}\n💰 **مبلغ:** {total_price}\n📍 **آدرس:** {full_address}\n🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n📝 **اقلام:**\n{items_text}")
                 
+                # --- جایگزین هوشمند برای ارسال عکس فاکتور بدون نیاز به کلید ---
                 invoice_url = f"{SITE_URL}/invoice/{order_no}/"
-                screenshot_api = f"https://api.screenshotmachine.com/?key=FREE&url={invoice_url}&dimension=1024x768"
+                # استفاده از سرویس رایگان thum.io که نیاز به API Key ندارد
+                screenshot_api = f"https://image.thum.io/get/width/1200/crop/800/noanimate/{invoice_url}"
                 
                 await wait.delete()
-                await context.bot.send_photo(
-                    chat_id=update.effective_chat.id,
-                    photo=screenshot_api,
-                    caption=msg + f"\n\n🔗 [مشاهده فاکتور در سایت]({invoice_url})",
-                    parse_mode='Markdown'
+                try:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=screenshot_api,
+                        caption=msg + f"\n\n🔗 [مشاهده فاکتور در سایت]({invoice_url})",
+                        parse_mode='Markdown'
+                    )
+                except:
+                    # اگر به هر دلیلی عکس لود نشد، فقط متن و لینک را بفرستد تا ربات متوقف نشود
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=msg + f"\n\n🔗 **لینک فاکتور:**\n{invoice_url}",
+                        parse_mode='Markdown'
+                    )
                 )
                 return ConversationHandler.END
         except Exception as e: print(f"API Error: {e}")
