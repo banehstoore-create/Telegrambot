@@ -53,6 +53,22 @@ CHANNEL_ID = "@banehstoore"
 SUPPORT_URL = "https://t.me/+989180514202"
 MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 
+# --- بخش پشتیبانی و مشاوره (جدید) ---
+async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📍 آدرس فروشگاه", url="https://maps.app.goo.gl/eWv6njTbL8ivfbYa6")],
+        [InlineKeyboardButton("📞 تماس تلفنی", url="tel:09180514202"), 
+         InlineKeyboardButton("💬 واتس‌اپ", url="https://wa.me/989180514202")],
+        [InlineKeyboardButton("📢 کانال تلگرام", url="https://t.me/banehstoore"),
+         InlineKeyboardButton("🌐 سایت", url="https://banehstoore.ir")],
+        [InlineKeyboardButton("📸 اینستاگرام", url="https://instagram.com/banehstoore.ir")]
+    ]
+    await update.message.reply_text(
+        "🎧 **مرکز پشتیبانی و مشاوره بانه استور**\n\nجهت ارتباط با کارشناسان و دسترسی به شبکه‌های اجتماعی ما از گزینه‌های زیر استفاده کنید:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
 # --- ۴. بخش پیگیری سفارش ---
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔢 لطفاً شماره سفارش خود را وارد کنید:")
@@ -114,7 +130,7 @@ async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
-    if query in ["جستجوی محصول 🔍", "پیگیری سفارش 📦", "ورود به پنل مدیریت ⚙️", "🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"]: return ConversationHandler.END
+    if query in ["جستجوی محصول 🔍", "پیگیری سفارش 📦", "ورود به پنل مدیریت ⚙️", "🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای", "📞 پشتیبانی و مشاوره"]: return ConversationHandler.END
     wait = await update.message.reply_text(f"⏳ در حال جستجو برای «{query}»...")
     try:
         res = requests.get(f"{SITE_URL}/search?q={query}", headers=HEADERS, timeout=15)
@@ -182,7 +198,11 @@ async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id; admin_id = os.getenv('ADMIN_ID')
-    main_kb = [["جستجوی محصول 🔍", "پیگیری سفارش 📦"], ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"]]
+    main_kb = [
+        ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
+        ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
+        ["📞 پشتیبانی و مشاوره"]
+    ]
     if str(user_id) == admin_id: main_kb.insert(0, ["ورود به پنل مدیریت ⚙️"])
     
     conn = get_db_connection(); cur = conn.cursor()
@@ -215,7 +235,12 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await context.bot.send_message(chat_id=admin_id, text=alert, parse_mode='Markdown')
         except: pass
 
-    await update.message.reply_text(f"✅ {name} عزیز، خوش آمدید!", reply_markup=ReplyKeyboardMarkup([["جستجوی محصول 🔍", "پیگیری سفارش 📦"], ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"]], resize_keyboard=True))
+    main_menu_kb = [
+        ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
+        ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
+        ["📞 پشتیبانی و مشاوره"]
+    ]
+    await update.message.reply_text(f"✅ {name} عزیز، خوش آمدید!", reply_markup=ReplyKeyboardMarkup(main_menu_kb, resize_keyboard=True))
     return ConversationHandler.END
 
 # --- ۷. پنل ادمین ---
@@ -274,6 +299,7 @@ if __name__ == '__main__':
         app = ApplicationBuilder().token(TOKEN).build()
         app.add_handler(MessageHandler(filters.REPLY & filters.Chat(int(os.getenv('ADMIN_ID', 0))), admin_reply_handler))
         app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی محصولات$"), show_categories))
+        app.add_handler(MessageHandler(filters.Regex("^📞 پشتیبانی و مشاوره$"), show_support))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
         
