@@ -57,14 +57,21 @@ MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📍 آدرس فروشگاه", url="https://maps.app.goo.gl/eWv6njTbL8ivfbYa6")],
-        [InlineKeyboardButton("📞 تماس تلفنی", url="tel:09180514202"), 
-         InlineKeyboardButton("💬 واتس‌اپ", url="https://wa.me/989180514202")],
-        [InlineKeyboardButton("📢 کانال تلگرام", url="https://t.me/banehstoore"),
-         InlineKeyboardButton("🌐 سایت", url="https://banehstoore.ir")],
-        [InlineKeyboardButton("📸 اینستاگرام", url="https://instagram.com/banehstoore.ir")]
+        [InlineKeyboardButton("💬 ارتباط در واتس‌اپ", url="https://wa.me/989180514202")],
+        [InlineKeyboardButton("📢 کانال تلگرامی", url="https://t.me/banehstoore"),
+         InlineKeyboardButton("🌐 آدرس سایت", url="https://banehstoore.ir")],
+        [InlineKeyboardButton("📸 پیج اینستاگرام", url="https://instagram.com/banehstoore.ir")]
     ]
+    
+    msg = (
+        "🎧 **بخش پشتیبانی و مشاوره بانه استور**\n\n"
+        "📞 **شماره تماس:** `09180514202`\n"
+        "*(برای تماس مستقیم، روی شماره بالا کلیک کنید)*\n\n"
+        "جهت ارتباط در سایر شبکه‌ها و دسترسی به آدرس ما از دکمه‌های زیر استفاده کنید:"
+    )
+    
     await update.message.reply_text(
-        "🎧 **مرکز پشتیبانی و مشاوره بانه استور**\n\nجهت ارتباط با کارشناسان و دسترسی به شبکه‌های اجتماعی ما از گزینه‌های زیر استفاده کنید:",
+        msg,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
@@ -198,6 +205,7 @@ async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id; admin_id = os.getenv('ADMIN_ID')
+    # دکمه پشتیبانی اضافه شد
     main_kb = [
         ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
         ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
@@ -235,12 +243,12 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await context.bot.send_message(chat_id=admin_id, text=alert, parse_mode='Markdown')
         except: pass
 
-    main_menu_kb = [
+    # دکمه پشتیبانی اضافه شد
+    await update.message.reply_text(f"✅ {name} عزیز، خوش آمدید!", reply_markup=ReplyKeyboardMarkup([
         ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
         ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
         ["📞 پشتیبانی و مشاوره"]
-    ]
-    await update.message.reply_text(f"✅ {name} عزیز، خوش آمدید!", reply_markup=ReplyKeyboardMarkup(main_menu_kb, resize_keyboard=True))
+    ], resize_keyboard=True))
     return ConversationHandler.END
 
 # --- ۷. پنل ادمین ---
@@ -299,7 +307,7 @@ if __name__ == '__main__':
         app = ApplicationBuilder().token(TOKEN).build()
         app.add_handler(MessageHandler(filters.REPLY & filters.Chat(int(os.getenv('ADMIN_ID', 0))), admin_reply_handler))
         app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی محصولات$"), show_categories))
-        app.add_handler(MessageHandler(filters.Regex("^📞 پشتیبانی و مشاوره$"), show_support))
+        app.add_handler(MessageHandler(filters.Regex("^📞 پشتیبانی و مشاوره$"), show_support)) # هندلر دکمه پشتیبانی
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
         
