@@ -60,33 +60,58 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
-    wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات از بانه استور...")
+    wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات و فاکتور از بانه استور...")
+    
     try:
+        # ۱. بررسی دیتابیس محلی
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
         local_order = cur.fetchone(); cur.close(); conn.close()
         if local_order:
             await wait.edit_text(f"📄 **جزئیات فاکتور (ثبت دستی):**\n\n{local_order[0]}", parse_mode='Markdown')
-            # --- بخش جدید: استخراج و ارسال فاکتور مستقیم از سایت ---
+            return ConversationHandler.END
+    except Exception as e:
+        print(f"DB Error: {e}")
+
+    # ۲. استخراج از API میکسین
+    if MIXIN_API_KEY:
         try:
-            # لینک مستقیم فاکتور در سایت شما
-            invoice_url = f"{SITE_URL}/invoice/{order_no}/"
-            
-            # استفاده از یک سرویس رایگان برای تبدیل لینک به عکس (اسکرین‌شات از فاکتور)
-            # این روش نیازی به نصب هیچ کتابخانه اضافی روی هاست شما ندارد
-            screenshot_api = f"https://api.screenshotmachine.com/?key=FREE&url={invoice_url}&dimension=1024x768"
-            
-            # ارسال عکس فاکتور به مشتری
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=screenshot_api,
-                caption=f"📄 **فاکتور دیجیتال سفارش #{order_no}**\n\nجهت مشاهده نسخه چاپی روی لینک زیر بزنید:\n🔗 [مشاهده در سایت]({invoice_url})",
-                parse_mode='Markdown'
-            )
+            api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
+            res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=12)
+            if res.status_code == 200:
+                data = res.json()
+                customer_name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or "نامشخص"
+                status_map = {"pending": "⏳ در انتظار بررسی", "paid": "✅ پرداخت شده", "canceled": "❌ لغو شده", "preparing": "📦 در حال آماده‌سازی", "sent": "🚚 ارسال شده"}
+                status = status_map.get(data.get('status', 'pending').lower(), data.get('status'))
+                f_price = data.get('final_price')
+                total_price = "{:,} تومان".format(int(f_price)) if f_price else "نامشخص"
+                full_address = f"{data.get('shipping_province', '')}، {data.get('shipping_city', '')}، {data.get('shipping_address', '')}".strip('، ')
+                tracking_code = data.get('shipping_tracking_code')
+                
+                items_text = ""
+                for idx, item in enumerate(data.get('items', []), 1):
+                    p_name = item.get('product_title') or item.get('name') or "محصول"
+                    items_text += f"{idx}. {p_name} (تعداد: {item.get('quantity', 1)})\n"
+
+                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n👤 **تحویل گیرنده:** {customer_name}\n🚩 **وضعیت:** {status}\n💰 **مبلغ:** {total_price}\n📍 **آدرس:** {full_address}\n🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n📝 **اقلام:**\n{items_text}")
+                
+                # --- ارسال فاکتور مستقیم از سایت بصورت عکس ---
+                invoice_url = f"{SITE_URL}/invoice/{order_no}/"
+                screenshot_api = f"https://api.screenshotmachine.com/?key=FREE&url={invoice_url}&dimension=1024x768"
+                
+                await wait.delete()
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=screenshot_api,
+                    caption=msg + f"\n\n🔗 [مشاهده فاکتور در سایت]({invoice_url})",
+                    parse_mode='Markdown'
+                )
+                return ConversationHandler.END
         except Exception as e:
-            # اگر به هر دلیلی عکس ساخته نشد، فقط لینک را بفرستد
-            await update.message.reply_text(f"🔗 **لینک مشاهده فاکتور:**\n{SITE_URL}/invoice/{order_no}/")
-return ConversationHandler.END
+            print(f"API Error: {e}")
+
+    await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد یا خطایی رخ داد.")
+    return ConversationHandler.END
     except: pass
 
     if MIXIN_API_KEY:
