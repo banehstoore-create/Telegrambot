@@ -67,7 +67,26 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_order = cur.fetchone(); cur.close(); conn.close()
         if local_order:
             await wait.edit_text(f"📄 **جزئیات فاکتور (ثبت دستی):**\n\n{local_order[0]}", parse_mode='Markdown')
-            return ConversationHandler.END
+            # --- بخش جدید: استخراج و ارسال فاکتور مستقیم از سایت ---
+        try:
+            # لینک مستقیم فاکتور در سایت شما
+            invoice_url = f"{SITE_URL}/invoice/{order_no}/"
+            
+            # استفاده از یک سرویس رایگان برای تبدیل لینک به عکس (اسکرین‌شات از فاکتور)
+            # این روش نیازی به نصب هیچ کتابخانه اضافی روی هاست شما ندارد
+            screenshot_api = f"https://api.screenshotmachine.com/?key=FREE&url={invoice_url}&dimension=1024x768"
+            
+            # ارسال عکس فاکتور به مشتری
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=screenshot_api,
+                caption=f"📄 **فاکتور دیجیتال سفارش #{order_no}**\n\nجهت مشاهده نسخه چاپی روی لینک زیر بزنید:\n🔗 [مشاهده در سایت]({invoice_url})",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            # اگر به هر دلیلی عکس ساخته نشد، فقط لینک را بفرستد
+            await update.message.reply_text(f"🔗 **لینک مشاهده فاکتور:**\n{SITE_URL}/invoice/{order_no}/")
+return ConversationHandler.END
     except: pass
 
     if MIXIN_API_KEY:
