@@ -45,7 +45,7 @@ NAME, PHONE = range(2)
 SEARCH_QUERY = 10
 ADMIN_PANEL, BROADCAST = range(3, 5)
 TRACK_ORDER = 15
-ASK_PRICE = 20  # وضعیت جدید برای استعلام قیمت
+ASK_PRICE = 20
 
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 SITE_URL = "https://banehstoore.ir"
@@ -63,17 +63,14 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات و فاکتور از بانه استور...")
     
     try:
-        # ۱. بررسی دیتابیس محلی
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
         local_order = cur.fetchone(); cur.close(); conn.close()
         if local_order:
             await wait.edit_text(f"📄 **جزئیات فاکتور (ثبت دستی):**\n\n{local_order[0]}", parse_mode='Markdown')
             return ConversationHandler.END
-    except Exception as e:
-        print(f"DB Error: {e}")
+    except Exception as e: print(f"DB Error: {e}")
 
-    # ۲. استخراج از API میکسین
     if MIXIN_API_KEY:
         try:
             api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
@@ -95,7 +92,6 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n👤 **تحویل گیرنده:** {customer_name}\n🚩 **وضعیت:** {status}\n💰 **مبلغ:** {total_price}\n📍 **آدرس:** {full_address}\n🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n📝 **اقلام:**\n{items_text}")
                 
-                # --- ارسال فاکتور مستقیم از سایت بصورت عکس ---
                 invoice_url = f"{SITE_URL}/invoice/{order_no}/"
                 screenshot_api = f"https://api.screenshotmachine.com/?key=FREE&url={invoice_url}&dimension=1024x768"
                 
@@ -107,37 +103,8 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
                 return ConversationHandler.END
-        except Exception as e:
-            print(f"API Error: {e}")
+        except Exception as e: print(f"API Error: {e}")
 
-    await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد یا خطایی رخ داد.")
-    return ConversationHandler.END
-    except: pass
-
-    if MIXIN_API_KEY:
-        try:
-            api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
-            res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=12)
-            if res.status_code == 200:
-                data = res.json()
-                customer_name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or "نامشخص"
-                status_map = {"pending": "⏳ در انتظار بررسی", "paid": "✅ پرداخت شده", "canceled": "❌ لغو شده", "preparing": "📦 در حال آماده‌سازی", "sent": "🚚 ارسال شده"}
-                status = status_map.get(data.get('status', 'pending').lower(), data.get('status'))
-                f_price = data.get('final_price')
-                total_price = "{:,} تومان".format(int(f_price)) if f_price else "نامشخص"
-                full_address = f"{data.get('shipping_province', '')}، {data.get('shipping_city', '')}، {data.get('shipping_address', '')}".strip('، ')
-                tracking_code = data.get('shipping_tracking_code')
-                keyboard = []
-                if tracking_code and str(tracking_code).lower() != "none":
-                    keyboard.append([InlineKeyboardButton("🔎 رهگیری مستقیم از سامانه پست", url=f"https://tracking.post.ir/?id={tracking_code}")])
-                items_text = ""
-                for idx, item in enumerate(data.get('items', []), 1):
-                    p_name = item.get('product_title') or item.get('name') or "محصول"
-                    items_text += f"{idx}. {p_name} (تعداد: {item.get('quantity', 1)})\n"
-                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n👤 **تحویل گیرنده:** {customer_name}\n🚩 **وضعیت:** {status}\n💰 **مبلغ:** {total_price}\n📍 **آدرس:** {full_address}\n🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n📝 **اقلام:**\n{items_text}")
-                await wait.edit_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
-                return ConversationHandler.END
-        except: pass
     await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد.")
     return ConversationHandler.END
 
@@ -155,9 +122,8 @@ async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         soup = BeautifulSoup(res.text, 'html.parser')
         kb, seen = [], set()
         for link in soup.find_all('a', href=True):
-            url = link['href']
+            url = link['href']; title = link.get_text().strip()
             if url.startswith('/'): url = SITE_URL + url
-            title = link.get_text().strip()
             if "/product/" in url and len(title) > 8:
                 clean_title = re.sub(r'مشاهده|خرید|افزودن|تومان|قیمت', '', title).strip()
                 if url not in seen and clean_title:
@@ -177,56 +143,46 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         api_url = f"{SITE_URL}/api/management/v1/categories/"
         res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         if res.status_code == 200:
-            data = res.json()
-            categories = data.get('result', []) 
+            data = res.json(); categories = data.get('result', []) 
             if not categories:
-                await wait.edit_text("📂 دسته‌بندی فعالی در سایت یافت نشد.")
-                return
+                await wait.edit_text("📂 دسته‌بندی فعالی یافت نشد."); return
             keyboard, temp_row = [], []
             for cat in categories:
                 c_id = cat.get('id'); c_name = cat.get('name', 'دسته')
-                safe_name = quote(c_name.replace(" ", "-"))
-                cat_url = f"{SITE_URL}/category/{c_id}/{safe_name}/"
+                cat_url = f"{SITE_URL}/category/{c_id}/{quote(c_name.replace(' ', '-'))}/"
                 temp_row.append(InlineKeyboardButton(c_name, url=cat_url))
-                if len(temp_row) == 2:
-                    keyboard.append(temp_row); temp_row = []
+                if len(temp_row) == 2: keyboard.append(temp_row); temp_row = []
             if temp_row: keyboard.append(temp_row)
             await wait.delete()
             await update.message.reply_text("🗂 **دسته‌بندی محصولات بانه استور**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        else: await wait.edit_text(f"❌ خطا (کد {res.status_code})")
+        else: await wait.edit_text(f"❌ خطا در دریافت دسته‌بندی.")
     except Exception as e: await wait.edit_text(f"❌ خطای فنی: {str(e)}")
 
-# --- ۹. جدید: بخش استعلام قیمت (درخواست کاربر) ---
+# --- ۹. بخش استعلام قیمت ---
 async def ask_price_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "💰 **استعلام قیمت لحظه‌ای**\n\nلطفاً نام محصول یا لینک آن را بفرستید تا قیمت دقیق برای شما ارسال شود:",
-        reply_markup=ReplyKeyboardMarkup([["انصراف 🔙"]], resize_keyboard=True)
-    )
+    await update.message.reply_text("💰 **استعلام قیمت لحظه‌ای**\n\nلطفاً نام محصول یا لینک آن را بفرستید:", reply_markup=ReplyKeyboardMarkup([["انصراف 🔙"]], resize_keyboard=True))
     return ASK_PRICE
 
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "انصراف 🔙": return await start(update, context)
-    user = update.effective_user
-    admin_id = os.getenv('ADMIN_ID')
+    user = update.effective_user; admin_id = os.getenv('ADMIN_ID')
     msg = f"📩 **استعلام قیمت جدید**\n\n👤 مشتری: {user.full_name}\n🆔 کد کاربر: `ID:{user.id}`\n\n📝 متن درخواست:\n{update.message.text}"
     await context.bot.send_message(chat_id=admin_id, text=msg, parse_mode='Markdown')
-    await update.message.reply_text("✅ درخواست شما ارسال شد. پاسخ به زودی همین‌جا برای شما ارسال می‌شود.")
+    await update.message.reply_text("✅ درخواست شما ارسال شد.")
     return ConversationHandler.END
 
 async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID') or not update.message.reply_to_message: return
     try:
-        original_text = update.message.reply_to_message.text
-        user_id = re.search(r'ID:(\d+)', original_text).group(1)
+        user_id = re.search(r'ID:(\d+)', update.message.reply_to_message.text).group(1)
         resp = f"💰 **پاسخ کارشناس بانه استور:**\n\n{update.message.text}"
         await context.bot.send_message(chat_id=user_id, text=resp, parse_mode='Markdown')
         await update.message.reply_text("✅ پاسخ برای مشتری ارسال شد.")
-    except: await update.message.reply_text("❌ خطا در شناسایی کاربر (ریپلای نامعتبر)")
+    except: await update.message.reply_text("❌ خطا در شناسایی کاربر.")
 
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    admin_id = os.getenv('ADMIN_ID')
+    user_id = update.effective_user.id; admin_id = os.getenv('ADMIN_ID')
     main_kb = [["جستجوی محصول 🔍", "پیگیری سفارش 📦"], ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"]]
     if str(user_id) == admin_id: main_kb.insert(0, ["ورود به پنل مدیریت ⚙️"])
     
@@ -234,15 +190,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
     user_row = cur.fetchone(); cur.close(); conn.close()
     
-    # اگر کاربر قبلاً ثبت‌نام کرده باشد یا ادمین باشد
     if user_row or str(user_id) == admin_id:
         user_name = user_row[0] if user_row else "مدیریت عزیز"
-        await update.message.reply_text(
-            f"سلام {user_name} عزیز، به ربات بانه استور خوش آمدید:", 
-            reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True)
-        )
+        await update.message.reply_text(f"سلام {user_name} عزیز، به ربات بانه استور خوش آمدید:", reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
         return ConversationHandler.END
-        
     await update.message.reply_text("سلام! نام و نام خانوادگی خود را وارد کنید:")
     return NAME
 
@@ -255,37 +206,20 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.contact: return PHONE
     user_id, phone, name = update.effective_user.id, update.message.contact.phone_number, context.user_data.get('full_name')
-    
-    # ۱. ذخیره اطلاعات در دیتابیس
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO users (user_id, full_name, phone_number) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (user_id, name, phone))
     conn.commit(); cur.close(); conn.close()
     
-    # ۲. اطلاع‌رسانی فوری به ادمین
     admin_id = os.getenv('ADMIN_ID')
     if admin_id:
-        admin_alert = (
-            f"🆕 **کاربر جدید ثبت‌نام کرد!**\n\n"
-            f"👤 نام: {name}\n"
-            f"📞 شماره: `{phone}`\n"
-            f"🆔 آیدی تلگرام: `{user_id}`"
-        )
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=admin_alert, parse_mode='Markdown')
-        except Exception as e:
-            print(f"Error alerting admin: {e}")
+        alert = f"🆕 **کاربر جدید!**\n👤 نام: {name}\n📞 شماره: `{phone}`\n🆔 آیدی: `{user_id}`"
+        try: await context.bot.send_message(chat_id=admin_id, text=alert, parse_mode='Markdown')
+        except: pass
 
-    # ۳. پیام نهایی به کاربر
-    await update.message.reply_text(
-        f"✅ {name} عزیز، ثبت‌نام شما با موفقیت انجام شد!", 
-        reply_markup=ReplyKeyboardMarkup([
-            ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
-            ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"]
-        ], resize_keyboard=True)
-    )
+    await update.message.reply_text(f"✅ {name} عزیز، خوش آمدید!", reply_markup=ReplyKeyboardMarkup([["جستجوی محصول 🔍", "پیگیری سفارش 📦"], ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"]], resize_keyboard=True))
     return ConversationHandler.END
 
-# --- ۷. پنل ادمین و انتشار محصول ---
+# --- ۷. پنل ادمین ---
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     kb = [["آمار ربات 📊", "ارسال پیام همگانی 📢"], ["خروج از پنل 🔙"]]
@@ -294,8 +228,7 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection(); cur = conn.cursor(); cur.execute("SELECT COUNT(*) FROM users")
-    await update.message.reply_text(f"👥 تعداد کاربران: {cur.fetchone()[0]}")
-    cur.close(); conn.close()
+    await update.message.reply_text(f"👥 تعداد کاربران: {cur.fetchone()[0]}"); cur.close(); conn.close()
 
 async def pre_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("پیام را بفرستید:"); return BROADCAST
@@ -310,39 +243,25 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
-    url = update.message.text.strip()
-    p_match = re.search(r'/product/(\d+)/', url)
+    url = update.message.text.strip(); p_match = re.search(r'/product/(\d+)/', url)
     if not p_match: return
-    product_id = p_match.group(1)
-    wait = await update.message.reply_text(f"⏳ آماده‌سازی پست {product_id}...")
+    p_id = p_match.group(1); wait = await update.message.reply_text(f"⏳ در حال انتشار...")
     try:
-        res = requests.get(f"{SITE_URL}/api/management/v1/products/{product_id}/", headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
+        res = requests.get(f"{SITE_URL}/api/management/v1/products/{p_id}/", headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         if res.status_code == 200:
-            data = res.json()
-            name = data.get('name', 'محصول جدید')
-            price = data.get('price', 0); old_price = data.get('compare_at_price')
-            status_text = f"✅ موجود ({data.get('stock', 0)} عدد)" if data.get('available') else "❌ فعلاً ناموجود"
-            p_section = f"💰 <b>قیمت:</b> {'{:,} تومان'.format(int(price))}"
-            if old_price and int(old_price) > int(price):
-                p_section = f"💰 <b>قیمت ویژه:</b> {'{:,} تومان'.format(int(price))}\n❌ <s>قیمت قبل: {'{:,} تومان'.format(int(old_price))}</s>"
-            p_res = requests.get(url, headers=HEADERS, timeout=10)
-            soup = BeautifulSoup(p_res.text, 'html.parser')
-            img = soup.find("meta", attrs={"property": "og:image"})
-            img_url = img["content"] if img else None
-            caption = f"🛍 <b>{name}</b>\n\n{p_section}\n📦 <b>وضعیت:</b> {status_text}\n\n🚚 ارسال سریع | 💎 ضمانت اصالت\n\n✨ #بانه_استور"
-            kb = [[InlineKeyboardButton("🛒 مشاهده و خرید", url=url)], [InlineKeyboardButton("👨‍💻 مشاوره و فروش", url=SUPPORT_URL)]]
-            if img_url: await context.bot.send_photo(CHANNEL_ID, photo=img_url, caption=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-            else: await context.bot.send_message(CHANNEL_ID, text=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-            await wait.edit_text("✅ در کانال منتشر شد.")
-    except Exception as e: await wait.edit_text(f"❌ خطا: {str(e)}")
+            data = res.json(); name = data.get('name'); price = data.get('price')
+            caption = f"🛍 <b>{name}</b>\n💰 <b>قیمت:</b> {'{:,} تومان'.format(int(price))}\n\n✨ #بانه_استور"
+            kb = [[InlineKeyboardButton("🛒 خرید آنلاین", url=url)]]
+            await context.bot.send_message(CHANNEL_ID, text=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+            await wait.edit_text("✅ منتشر شد.")
+    except Exception as e: await wait.edit_text(f"❌ خطا: {e}")
 
 async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
-    text = update.message.text
     try:
-        order_id = re.search(r'شماره\s*:\s*(\d+)', text).group(1)
+        order_id = re.search(r'شماره\s*:\s*(\d+)', update.message.text).group(1)
         conn = get_db_connection(); cur = conn.cursor()
-        cur.execute("INSERT INTO orders (order_id, items) VALUES (%s, %s) ON CONFLICT (order_id) DO UPDATE SET items=EXCLUDED.items", (order_id, text))
+        cur.execute("INSERT INTO orders (order_id, items) VALUES (%s, %s) ON CONFLICT (order_id) DO UPDATE SET items=EXCLUDED.items", (order_id, update.message.text))
         conn.commit(); cur.close(); conn.close()
         await update.message.reply_text(f"✅ فاکتور {order_id} ذخیره شد.")
     except: pass
@@ -354,13 +273,11 @@ if __name__ == '__main__':
     TOKEN = os.getenv('BOT_TOKEN')
     if TOKEN:
         app = ApplicationBuilder().token(TOKEN).build()
-        # هندلر ریپلای ادمین (خارج از گفتگو)
         app.add_handler(MessageHandler(filters.REPLY & filters.Chat(int(os.getenv('ADMIN_ID', 0))), admin_reply_handler))
-        
         app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی محصولات$"), show_categories))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
-
+        
         app.add_handler(ConversationHandler(
             entry_points=[MessageHandler(filters.Regex("^💰 استعلام قیمت لحظه‌ای$"), ask_price_start)],
             states={ASK_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, forward_to_admin)]},
