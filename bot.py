@@ -53,7 +53,27 @@ CHANNEL_ID = "@banehstoore"
 SUPPORT_URL = "https://t.me/+989180514202"
 MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 
-# --- بخش پشتیبانی و مشاوره (جدید) ---
+# --- بخش استخراج قیمت دلار ---
+async def get_dollar_price():
+    try:
+        url = "https://www.tgju.org/profile/price_dollar_rl"
+        res = requests.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        price_element = soup.find('span', {'data-qtoken': 'current_price'})
+        if price_element:
+            price_text = price_element.get_text().strip()
+            return f"💵 <b>قیمت لحظه‌ای دلار آمریکا:</b>\n\n💰 قیمت: <code>{price_text}</code> ریال\n✨ #بانه_استور"
+        return "❌ متأسفانه در حال حاضر امکان دریافت قیمت وجود ندارد."
+    except:
+        return "❌ خطا در برقراری ارتباط با سایت مرجع."
+
+async def show_dollar_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    wait = await update.message.reply_text("⏳ در حال استعلام قیمت دلار...")
+    message = await get_dollar_price()
+    await wait.delete()
+    await update.message.reply_text(message, parse_mode='HTML')
+
+# --- بخش پشتیبانی و مشاوره ---
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📍 آدرس فروشگاه", url="https://maps.app.goo.gl/eWv6njTbL8ivfbYa6")],
@@ -62,19 +82,13 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🌐 آدرس سایت", url="https://banehstoore.ir")],
         [InlineKeyboardButton("📸 پیج اینستاگرام", url="https://instagram.com/banehstoore.ir")]
     ]
-    
     msg = (
         "🎧 **بخش پشتیبانی و مشاوره بانه استور**\n\n"
         "📞 **شماره تماس:** `09180514202`\n"
         "*(برای تماس مستقیم، روی شماره بالا کلیک کنید)*\n\n"
         "جهت ارتباط در سایر شبکه‌ها و دسترسی به آدرس ما از دکمه‌های زیر استفاده کنید:"
     )
-    
-    await update.message.reply_text(
-        msg,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
 # --- ۴. بخش پیگیری سفارش ---
 async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,7 +98,6 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
     wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات از بانه استور...")
-    
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
@@ -93,7 +106,6 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await wait.edit_text(f"📄 **جزئیات فاکتور (ثبت دستی):**\n\n{local_order[0]}", parse_mode='Markdown')
             return ConversationHandler.END
     except Exception as e: print(f"DB Error: {e}")
-
     if MIXIN_API_KEY:
         try:
             api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
@@ -107,26 +119,12 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_price = "{:,} تومان".format(int(f_price)) if f_price else "نامشخص"
                 full_address = f"{data.get('shipping_province', '')}، {data.get('shipping_city', '')}، {data.get('shipping_address', '')}".strip('، ')
                 tracking_code = data.get('shipping_tracking_code')
-                
-                items_text = ""
-                for idx, item in enumerate(data.get('items', []), 1):
-                    p_name = item.get('product_title') or item.get('name') or "محصول"
-                    items_text += f"{idx}. {p_name} (تعداد: {item.get('quantity', 1)})\n"
-
+                items_text = "".join([f"{i+1}. {item.get('product_title') or 'محصول'} (تعداد: {item.get('quantity', 1)})\n" for i, item in enumerate(data.get('items', []))])
                 invoice_url = f"{SITE_URL}/invoice/{order_no}/"
-                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n"
-                       f"👤 **تحویل گیرنده:** {customer_name}\n"
-                       f"🚩 **وضعیت:** {status}\n"
-                       f"💰 **مبلغ:** {total_price}\n"
-                       f"📍 **آدرس:** {full_address}\n"
-                       f"🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n"
-                       f"📝 **اقلام:**\n{items_text}\n"
-                       f"🔗 [مشاهده فاکتور در سایت]({invoice_url})")
-
+                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n👤 **تحویل گیرنده:** {customer_name}\n🚩 **وضعیت:** {status}\n💰 **مبلغ:** {total_price}\n📍 **آدرس:** {full_address}\n🆔 **کد رهگیری:** `{tracking_code or 'هنوز صادر نشده'}`\n\n📝 **اقلام:**\n{items_text}\n🔗 [مشاهده فاکتور در سایت]({invoice_url})")
                 await wait.edit_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
                 return ConversationHandler.END
-        except Exception as e: print(f"API Error: {e}")
-
+        except: pass
     await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد.")
     return ConversationHandler.END
 
@@ -137,7 +135,7 @@ async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
-    if query in ["جستجوی محصول 🔍", "پیگیری سفارش 📦", "ورود به پنل مدیریت ⚙️", "🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای", "📞 پشتیبانی و مشاوره"]: return ConversationHandler.END
+    if query in ["جستجوی محصول 🔍", "پیگیری سفارش 📦", "ورود به پنل مدیریت ⚙️", "🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای", "📞 پشتیبانی و مشاوره", "💵 قیمت لحظه‌ای دلار"]: return ConversationHandler.END
     wait = await update.message.reply_text(f"⏳ در حال جستجو برای «{query}»...")
     try:
         res = requests.get(f"{SITE_URL}/search?q={query}", headers=HEADERS, timeout=15)
@@ -166,11 +164,10 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         if res.status_code == 200:
             data = res.json(); categories = data.get('result', []) 
-            if not categories:
-                await wait.edit_text("📂 دسته‌بندی فعالی یافت نشد."); return
+            if not categories: await wait.edit_text("📂 دسته‌بندی فعالی یافت نشد."); return
             keyboard, temp_row = [], []
             for cat in categories:
-                c_id = cat.get('id'); c_name = cat.get('name', 'دسته')
+                c_id, c_name = cat.get('id'), cat.get('name', 'دسته')
                 cat_url = f"{SITE_URL}/category/{c_id}/{quote(c_name.replace(' ', '-'))}/"
                 temp_row.append(InlineKeyboardButton(c_name, url=cat_url))
                 if len(temp_row) == 2: keyboard.append(temp_row); temp_row = []
@@ -204,21 +201,19 @@ async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id; admin_id = os.getenv('ADMIN_ID')
+    user_id, admin_id = update.effective_user.id, os.getenv('ADMIN_ID')
     main_kb = [
         ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
         ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
-        ["📞 پشتیبانی و مشاوره"]
+        ["💵 قیمت لحظه‌ای دلار", "📞 پشتیبانی و مشاوره"]
     ]
     if str(user_id) == admin_id: main_kb.insert(0, ["ورود به پنل مدیریت ⚙️"])
-    
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
     user_row = cur.fetchone(); cur.close(); conn.close()
-    
     if user_row or str(user_id) == admin_id:
         user_name = user_row[0] if user_row else "مدیریت عزیز"
-        await update.message.reply_text(f"سلام {user_name} عزیز، به ربات بانه استور خوش آمدید:", reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
+        await update.message.reply_text(f"سلام {user_name} عزیز، خوش آمدید:", reply_markup=ReplyKeyboardMarkup(main_kb, resize_keyboard=True))
         return ConversationHandler.END
     await update.message.reply_text("سلام! نام و نام خانوادگی خود را وارد کنید:")
     return NAME
@@ -235,17 +230,15 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO users (user_id, full_name, phone_number) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (user_id, name, phone))
     conn.commit(); cur.close(); conn.close()
-    
     admin_id = os.getenv('ADMIN_ID')
     if admin_id:
         alert = f"🆕 **کاربر جدید!**\n👤 نام: {name}\n📞 شماره: `{phone}`\n🆔 آیدی: `{user_id}`"
         try: await context.bot.send_message(chat_id=admin_id, text=alert, parse_mode='Markdown')
         except: pass
-
     await update.message.reply_text(f"✅ {name} عزیز، خوش آمدید!", reply_markup=ReplyKeyboardMarkup([
         ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
         ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
-        ["📞 پشتیبانی و مشاوره"]
+        ["💵 قیمت لحظه‌ای دلار", "📞 پشتیبانی و مشاوره"]
     ], resize_keyboard=True))
     return ConversationHandler.END
 
@@ -271,69 +264,42 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.close(); conn.close()
     await update.message.reply_text("✅ ارسال شد."); return ADMIN_PANEL
 
-# --- بخش ارسال محصول به کانال (به‌روزرسانی شده با کپشن سفارشی) ---
+# --- بخش ارسال محصول به کانال (به‌روزرسانی شده با کپشن سفارشی و دکمه پشتیبانی) ---
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text.strip(); p_match = re.search(r'/product/(\d+)/', url)
     if not p_match: return
     p_id = p_match.group(1); wait = await update.message.reply_text(f"⏳ در حال استخراج و انتشار...")
     try:
-        # دریافت اطلاعات متنی و قیمتی از API
         res = requests.get(f"{SITE_URL}/api/management/v1/products/{p_id}/", headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         if res.status_code == 200:
             data = res.json()
-            name = data.get('name', 'محصول نامشخص')
-            price = data.get('price', 0)
+            name, price = data.get('name', 'محصول'), data.get('price', 0)
+            old_price = data.get('old_price') or data.get('original_price')
+            stock = data.get('inventory') or data.get('stock')
+            status_text = f"✅ موجود ({stock} عدد)" if stock and int(stock) > 0 else "❌ ناموجود"
             
-            # تلاش برای یافتن قیمت قبل در کلیدهای متداول API
-            old_price = data.get('old_price') or data.get('original_price') or data.get('regular_price')
-            
-            # تلاش برای یافتن موجودی و وضعیت
-            stock = data.get('inventory') or data.get('stock') or data.get('quantity')
-            is_available = data.get('is_available', True)
-            
-            # تنظیم متن وضعیت موجودی
-            if stock is not None and str(stock).isdigit():
-                if int(stock) > 0:
-                    status_text = f"✅ موجود ({stock} عدد)"
-                else:
-                    status_text = "❌ ناموجود"
-            else:
-                status_text = "✅ موجود" if is_available else "❌ ناموجود"
-
-            # ساخت کپشن دقیقاً طبق فرمت درخواستی شما
-            caption = f"🛍 <b>{name}</b>\n\n"
-            caption += f"💰 <b>قیمت ویژه:</b> {'{:,}'.format(int(price))} تومان\n"
-            
+            caption = f"🛍 <b>{name}</b>\n\n💰 <b>قیمت ویژه:</b> {'{:,}'.format(int(price))} تومان\n"
             if old_price and int(old_price) > int(price):
                 caption += f"❌ <b>قیمت قبل:</b> <s>{'{:,}'.format(int(old_price))}</s> تومان\n"
-                
-            caption += f"📦 <b>وضعیت:</b> {status_text}\n\n"
-            caption += "🚚 ارسال سریع | 💎 ضمانت اصالت\n\n"
-            caption += "✨ #بانه_استور"
+            caption += f"📦 <b>وضعیت:</b> {status_text}\n\n🚚 ارسال سریع | 💎 ضمانت اصالت\n\n✨ #بانه_استور"
 
-            kb = [[InlineKeyboardButton("🛒 خرید آنلاین", url=url)]]
+            kb = [
+                [InlineKeyboardButton("🛒 خرید آنلاین", url=url)],
+                [InlineKeyboardButton("💬 مشاوره و پشتیبانی", url=SUPPORT_URL)]
+            ]
             
-            # استخراج تصویر اصلی از صفحه محصول سایت
             image_url = None
             try:
                 html_res = requests.get(url, headers=HEADERS, timeout=15)
                 soup = BeautifulSoup(html_res.text, 'html.parser')
                 meta_img = soup.find('meta', property='og:image')
-                if meta_img:
-                    image_url = meta_img['content']
-            except:
-                pass
+                if meta_img: image_url = meta_img['content']
+            except: pass
             
-            # ارسال همراه با عکس اگر یافت شد، در غیر این صورت فقط متن
-            if image_url:
-                await context.bot.send_photo(CHANNEL_ID, photo=image_url, caption=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-            else:
-                await context.bot.send_message(CHANNEL_ID, text=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-                
-            await wait.edit_text("✅ محصول با موفقیت در کانال منتشر شد.")
-        else:
-            await wait.edit_text("❌ خطا در دریافت اطلاعات محصول از سایت.")
+            if image_url: await context.bot.send_photo(CHANNEL_ID, photo=image_url, caption=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+            else: await context.bot.send_message(CHANNEL_ID, text=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+            await wait.edit_text("✅ محصول با موفقیت منتشر شد.")
     except Exception as e: await wait.edit_text(f"❌ خطا: {e}")
 
 async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -356,6 +322,7 @@ if __name__ == '__main__':
         app.add_handler(MessageHandler(filters.REPLY & filters.Chat(int(os.getenv('ADMIN_ID', 0))), admin_reply_handler))
         app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی محصولات$"), show_categories))
         app.add_handler(MessageHandler(filters.Regex("^📞 پشتیبانی و مشاوره$"), show_support)) 
+        app.add_handler(MessageHandler(filters.Regex("^💵 قیمت لحظه‌ای دلار$"), show_dollar_price))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
         
