@@ -109,29 +109,50 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
-    wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات...")
+    wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات از بانه استور...")
+    
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
         local_order = cur.fetchone(); cur.close(); conn.close()
         if local_order:
-            await wait.edit_text(f"📄 **جزئیات فاکتور:**\n\n{local_order[0]}", parse_mode='Markdown')
+            await wait.edit_text(f"📄 **جزئیات فاکتور (ثبت دستی):**\n\n{local_order[0]}", parse_mode='Markdown')
             return ConversationHandler.END
-    except: pass
+    except Exception as e: print(f"DB Error: {e}")
+
     if MIXIN_API_KEY:
         try:
             api_url = f"{SITE_URL}/api/management/v1/orders/{order_no}/"
             res = requests.get(api_url, headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=12)
             if res.status_code == 200:
                 data = res.json()
-                status_map = {"pending": "⏳ بررسی", "paid": "✅ پرداخت", "preparing": "📦 آماده‌سازی", "sent": "🚚 ارسال شده"}
-                status = status_map.get(data.get('status', '').lower(), "نامشخص")
+                customer_name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or "نامشخص"
+                status_map = {"pending": "⏳ در انتظار بررسی", "paid": "✅ پرداخت شده", "canceled": "❌ لغو شده", "preparing": "📦 در حال آماده‌سازی", "sent": "🚚 ارسال شده"}
+                status = status_map.get(data.get('status', 'pending').lower(), data.get('status'))
                 f_price = data.get('final_price')
-                total = "{:,} تومان".format(int(f_price)) if f_price else "نامشخص"
-                msg = f"📦 **سفارش {order_no}**\n🚩 وضعیت: {status}\n💰 مبلغ: {total}\n🔗 [مشاهده فاکتور]({SITE_URL}/invoice/{order_no}/)"
-                await wait.edit_text(msg, parse_mode='Markdown')
+                total_price = "{:,} تومان".format(int(f_price)) if f_price else "نامشخص"
+                full_address = f"{data.get('shipping_province', '')}، {data.get('shipping_city', '')}، {data.get('shipping_address', '')}".strip('، ')
+                tracking_code = data.get('shipping_tracking_code')
+                
+                items_text = ""
+                for idx, item in enumerate(data.get('items', []), 1):
+                    p_name = item.get('product_title') or item.get('name') or "محصول"
+                    items_text += f"{idx}. {p_name} (تعداد: {item.get('quantity', 1)})\n"
+
+                invoice_url = f"{SITE_URL}/invoice/{order_no}/"
+                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n"
+                       f"👤 **تحویل گیرنده:** {customer_name}\n"
+                       f"🚩 **وضعیت:** {status}\n"
+                       f"💰 **مبلغ:** {total_price}\n"
+                       f"📍 **آدرس:** {full_address}\n"
+                       f"🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n"
+                       f"📝 **اقلام:**\n{items_text}\n"
+                       f"🔗 [مشاهده فاکتور در سایت]({invoice_url})")
+
+                await wait.edit_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
                 return ConversationHandler.END
-        except: pass
+        except Exception as e: print(f"API Error: {e}")
+
     await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد.")
     return ConversationHandler.END
 
