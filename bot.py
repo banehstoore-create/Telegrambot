@@ -51,30 +51,25 @@ HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 SITE_URL = "https://banehstoore.ir"
 CHANNEL_ID = "@banehstoore"
 SUPPORT_URL = "https://t.me/+989180514202"
+TRUST_URL = "https://t.me/Banehstoore_Trust"
 MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 
 # --- بخش استخراج قیمت دلار (بهینه‌سازی شده با AlanChand) ---
 async def get_dollar_price():
     try:
-        # استفاده از سایت Alanchand به عنوان منبع پایدار
         url = "https://alanchand.com/en"
         res = requests.get(url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # پیدا کردن سطر مربوط به دلار آمریکا در جدول قیمت‌ها
         rows = soup.find_all('tr')
         price = None
         for row in rows:
             if "US Dollar" in row.get_text():
                 cols = row.find_all('td')
                 if len(cols) >= 3:
-                    price = cols[2].get_text().strip() # ستون قیمت فروش
+                    price = cols[2].get_text().strip()
                     break
-        
         if price:
             return f"💵 <b>قیمت لحظه‌ای دلار آمریکا:</b>\n\n💰 قیمت: <code>{price}</code> ریال\n✨ #بانه_استور"
-        
-        #Fallback به منبع دوم در صورت لزوم
         return "❌ متأسفانه قیمت در این لحظه دریافت نشد. لطفاً از دکمه پشتیبانی برای استعلام دستی استفاده کنید."
     except Exception as e:
         return f"❌ خطا در اتصال به مرجع قیمت."
@@ -84,6 +79,15 @@ async def show_dollar_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = await get_dollar_price()
     await wait.delete()
     await update.message.reply_text(message, parse_mode='HTML')
+
+# --- بخش اعتماد و رضایت (جدید) ---
+async def show_trust(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = [[InlineKeyboardButton("✅ مشاهده رضایت مشتریان و سوابق", url=TRUST_URL)]]
+    msg = (
+        "🤝 **اعتماد شما، سرمایه بانه استور است**\n\n"
+        "برای مشاهده رضایت مشتریان، فیش‌های واریزی و کدهای رهگیری ارسالی، روی دکمه شیشه‌ای زیر کلیک کنید:"
+    )
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 # --- بخش پشتیبانی و مشاوره ---
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -110,7 +114,6 @@ async def track_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_no = update.message.text.strip()
     wait = await update.message.reply_text("⏳ در حال استخراج اطلاعات از بانه استور...")
-    
     try:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT items FROM orders WHERE order_id = %s", (order_no,))
@@ -118,7 +121,7 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if local_order:
             await wait.edit_text(f"📄 **جزئیات فاکتور (ثبت دستی):**\n\n{local_order[0]}", parse_mode='Markdown')
             return ConversationHandler.END
-    except Exception as e: print(f"DB Error: {e}")
+    except: pass
 
     if MIXIN_API_KEY:
         try:
@@ -133,26 +136,12 @@ async def do_track_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_price = "{:,} تومان".format(int(f_price)) if f_price else "نامشخص"
                 full_address = f"{data.get('shipping_province', '')}، {data.get('shipping_city', '')}، {data.get('shipping_address', '')}".strip('، ')
                 tracking_code = data.get('shipping_tracking_code')
-                
-                items_text = ""
-                for idx, item in enumerate(data.get('items', []), 1):
-                    p_name = item.get('product_title') or item.get('name') or "محصول"
-                    items_text += f"{idx}. {p_name} (تعداد: {item.get('quantity', 1)})\n"
-
+                items_text = "".join([f"{idx+1}. {i.get('product_title','محصول')} (تعداد: {i.get('quantity', 1)})\n" for idx, i in enumerate(data.get('items', []))])
                 invoice_url = f"{SITE_URL}/invoice/{order_no}/"
-                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n"
-                       f"👤 **تحویل گیرنده:** {customer_name}\n"
-                       f"🚩 **وضعیت:** {status}\n"
-                       f"💰 **مبلغ:** {total_price}\n"
-                       f"📍 **آدرس:** {full_address}\n"
-                       f"🆔 **کد رهگیری:** `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n"
-                       f"📝 **اقلام:**\n{items_text}\n"
-                       f"🔗 [مشاهده فاکتور در سایت]({invoice_url})")
-
-                await wait.edit_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
+                msg = (f"📦 **اطلاعات سفارش {order_no}**\n\n👤 تحویل: {customer_name}\n🚩 وضعیت: {status}\n💰 مبلغ: {total_price}\n📍 آدرس: {full_address}\n🆔 کد رهگیری: `{tracking_code if tracking_code else 'هنوز صادر نشده'}`\n\n📝 اقلام:\n{items_text}\n🔗 [مشاهده فاکتور]({invoice_url})")
+                await wait.edit_text(msg, parse_mode='Markdown')
                 return ConversationHandler.END
-        except Exception as e: print(f"API Error: {e}")
-
+        except: pass
     await wait.edit_text(f"❌ سفارش #{order_no} یافت نشد.")
     return ConversationHandler.END
 
@@ -163,7 +152,7 @@ async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
-    ignore = ["جستجوی محصول 🔍", "پیگیری سفارش 📦", "ورود به پنل مدیریت ⚙️", "🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای", "📞 پشتیبانی و مشاوره", "💵 قیمت لحظه‌ای دلار"]
+    ignore = ["جستجوی محصول 🔍", "پیگیری سفارش 📦", "ورود به پنل مدیریت ⚙️", "🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای", "📞 پشتیبانی و مشاوره", "💵 قیمت لحظه‌ای دلار", "🤝 اعتماد و رضایت مشتریان"]
     if query in ignore: return ConversationHandler.END
     wait = await update.message.reply_text(f"⏳ در حال جستجو...")
     try:
@@ -205,7 +194,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     main_kb = [
         ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
         ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
-        ["💵 قیمت لحظه‌ای دلار", "📞 پشتیبانی و مشاوره"]
+        ["💵 قیمت لحظه‌ای دلار", "📞 پشتیبانی و مشاوره"],
+        ["🤝 اعتماد و رضایت مشتریان"]
     ]
     if str(uid) == aid: main_kb.insert(0, ["ورود به پنل مدیریت ⚙️"])
     conn = get_db_connection(); cur = conn.cursor()
@@ -230,7 +220,8 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO users (user_id, full_name, phone_number) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (uid, nm, ph))
     conn.commit(); cur.close(); conn.close()
-    await update.message.reply_text(f"✅ ثبت شد.", reply_markup=ReplyKeyboardMarkup([["جستجوی محصول 🔍", "پیگیری سفارش 📦"], ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"], ["💵 قیمت لحظه‌ای دلار", "📞 پشتیبانی و مشاوره"]], resize_keyboard=True))
+    kb = [["جستجوی محصول 🔍", "پیگیری سفارش 📦"], ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"], ["💵 قیمت لحظه‌ای دلار", "📞 پشتیبانی و مشاوره"], ["🤝 اعتماد و رضایت مشتریان"]]
+    await update.message.reply_text(f"✅ ثبت شد.", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
     return ConversationHandler.END
 
 # --- ۷. پنل ادمین ---
@@ -254,7 +245,7 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
     cur.close(); conn.close(); await update.message.reply_text("✅ ارسال شد."); return ADMIN_PANEL
 
-# --- بخش ارسال محصول (با اصلاح دکمه پشتیبانی ثابت) ---
+# --- بخش ارسال محصول ---
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text.strip(); p_match = re.search(r'/product/(\d+)/', url)
@@ -268,24 +259,16 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             old = d.get('old_price') or d.get('original_price')
             stk = d.get('inventory') or d.get('stock')
             status = f"✅ موجود ({stk} عدد)" if stk and int(stk) > 0 else "❌ ناموجود"
-            
             cap = f"🛍 <b>{name}</b>\n\n💰 <b>قیمت ویژه:</b> {'{:,}'.format(int(price))} تومان\n"
             if old and int(old) > int(price): cap += f"❌ <b>قیمت قبل:</b> <s>{'{:,}'.format(int(old))}</s> تومان\n"
             cap += f"📦 <b>وضعیت:</b> {status}\n\n🚚 ارسال سریع | 💎 ضمانت اصالت\n\n✨ #بانه_استور"
-
-            # بازگرداندن دکمه پشتیبانی زیر دکمه خرید
-            kb = [
-                [InlineKeyboardButton("🛒 خرید آنلاین", url=url)],
-                [InlineKeyboardButton("💬 مشاوره و پشتیبانی", url=SUPPORT_URL)]
-            ]
-            
+            kb = [[InlineKeyboardButton("🛒 خرید آنلاین", url=url)], [InlineKeyboardButton("💬 مشاوره و پشتیبانی", url=SUPPORT_URL)]]
             img = None
             try:
                 soup = BeautifulSoup(requests.get(url, headers=HEADERS).text, 'html.parser')
                 meta = soup.find('meta', property='og:image')
                 if meta: img = meta['content']
             except: pass
-            
             if img: await context.bot.send_photo(CHANNEL_ID, photo=img, caption=cap, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
             else: await context.bot.send_message(CHANNEL_ID, text=cap, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
             await wait.edit_text("✅ منتشر شد.")
@@ -332,6 +315,7 @@ if __name__ == '__main__':
         app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی محصولات$"), show_categories))
         app.add_handler(MessageHandler(filters.Regex("^📞 پشتیبانی و مشاوره$"), show_support)) 
         app.add_handler(MessageHandler(filters.Regex("^💵 قیمت لحظه‌ای دلار$"), show_dollar_price))
+        app.add_handler(MessageHandler(filters.Regex("^🤝 اعتماد و رضایت مشتریان$"), show_trust)) # هندلر دکمه جدید
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
         
