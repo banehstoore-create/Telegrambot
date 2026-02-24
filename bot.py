@@ -53,32 +53,34 @@ CHANNEL_ID = "@banehstoore"
 SUPPORT_URL = "https://t.me/+989180514202"
 MIXIN_API_KEY = os.getenv('MIXIN_API_KEY')
 
-# --- بخش استخراج قیمت دلار (اصلاح شده و هوشمند) ---
+# --- بخش استخراج قیمت دلار (بهینه‌سازی شده با AlanChand) ---
 async def get_dollar_price():
     try:
-        url = "https://www.tgju.org/profile/price_dollar_rl"
+        # استفاده از سایت Alanchand به عنوان منبع پایدار
+        url = "https://alanchand.com/en"
         res = requests.get(url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # تست سه روش مختلف برای پیدا کردن قیمت در صورت تغییر سایت
+        # پیدا کردن سطر مربوط به دلار آمریکا در جدول قیمت‌ها
+        rows = soup.find_all('tr')
         price = None
-        # روش اول: تگ اسپان با ویژگی qtoken
-        el = soup.find('span', {'data-qtoken': 'current_price'})
-        # روش دوم: جستجوی مستقیم در جدول قیمت‌ها
-        if not el: el = soup.select_one('tr[data-market-row="price_dollar_rl"] .value')
-        # روش سوم: پیدا کردن از طریق کلاس‌های عمومی قیمت
-        if not el: el = soup.find('td', {'class': 'info-price'})
-
-        if el:
-            price = el.get_text().strip()
+        for row in rows:
+            if "US Dollar" in row.get_text():
+                cols = row.find_all('td')
+                if len(cols) >= 3:
+                    price = cols[2].get_text().strip() # ستون قیمت فروش
+                    break
+        
+        if price:
             return f"💵 <b>قیمت لحظه‌ای دلار آمریکا:</b>\n\n💰 قیمت: <code>{price}</code> ریال\n✨ #بانه_استور"
         
-        return "❌ متأسفانه قیمت در این لحظه از منبع دریافت نشد. لطفا دقایقی دیگر تلاش کنید."
+        #Fallback به منبع دوم در صورت لزوم
+        return "❌ متأسفانه قیمت در این لحظه دریافت نشد. لطفاً از دکمه پشتیبانی برای استعلام دستی استفاده کنید."
     except Exception as e:
         return f"❌ خطا در اتصال به مرجع قیمت."
 
 async def show_dollar_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wait = await update.message.reply_text("⏳ در حال استعلام قیمت از شبکه اطلاع‌رسانی طلا و ارز...")
+    wait = await update.message.reply_text("⏳ در حال استعلام قیمت از بازار آزاد...")
     message = await get_dollar_price()
     await wait.delete()
     await update.message.reply_text(message, parse_mode='HTML')
@@ -231,7 +233,7 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
     cur.close(); conn.close(); await update.message.reply_text("✅ ارسال شد."); return ADMIN_PANEL
 
-# --- بخش ارسال محصول (با دکمه پشتیبانی ثابت در زیر پست) ---
+# --- بخش ارسال محصول (با اصلاح دکمه پشتیبانی ثابت) ---
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text.strip(); p_match = re.search(r'/product/(\d+)/', url)
@@ -250,6 +252,7 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if old and int(old) > int(price): cap += f"❌ <b>قیمت قبل:</b> <s>{'{:,}'.format(int(old))}</s> تومان\n"
             cap += f"📦 <b>وضعیت:</b> {status}\n\n🚚 ارسال سریع | 💎 ضمانت اصالت\n\n✨ #بانه_استور"
 
+            # بازگرداندن دکمه پشتیبانی زیر دکمه خرید
             kb = [
                 [InlineKeyboardButton("🛒 خرید آنلاین", url=url)],
                 [InlineKeyboardButton("💬 مشاوره و پشتیبانی", url=SUPPORT_URL)]
