@@ -205,7 +205,6 @@ async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 # --- ۶. مدیریت و ثبت‌نام ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id; admin_id = os.getenv('ADMIN_ID')
-    # دکمه پشتیبانی اضافه شد
     main_kb = [
         ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
         ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
@@ -243,7 +242,6 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await context.bot.send_message(chat_id=admin_id, text=alert, parse_mode='Markdown')
         except: pass
 
-    # دکمه پشتیبانی اضافه شد
     await update.message.reply_text(f"✅ {name} عزیز، خوش آمدید!", reply_markup=ReplyKeyboardMarkup([
         ["جستجوی محصول 🔍", "پیگیری سفارش 📦"], 
         ["🗂 دسته‌بندی محصولات", "💰 استعلام قیمت لحظه‌ای"],
@@ -273,19 +271,38 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.close(); conn.close()
     await update.message.reply_text("✅ ارسال شد."); return ADMIN_PANEL
 
+# --- بخش ارسال محصول به کانال به روز رسانی شد ---
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text.strip(); p_match = re.search(r'/product/(\d+)/', url)
     if not p_match: return
-    p_id = p_match.group(1); wait = await update.message.reply_text(f"⏳ در حال انتشار...")
+    p_id = p_match.group(1); wait = await update.message.reply_text(f"⏳ در حال استخراج و انتشار...")
     try:
+        # دریافت اطلاعات متنی و قیمتی از API
         res = requests.get(f"{SITE_URL}/api/management/v1/products/{p_id}/", headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         if res.status_code == 200:
             data = res.json(); name = data.get('name'); price = data.get('price')
             caption = f"🛍 <b>{name}</b>\n💰 <b>قیمت:</b> {'{:,} تومان'.format(int(price))}\n\n✨ #بانه_استور"
             kb = [[InlineKeyboardButton("🛒 خرید آنلاین", url=url)]]
-            await context.bot.send_message(CHANNEL_ID, text=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-            await wait.edit_text("✅ منتشر شد.")
+            
+            # استخراج تصویر اصلی از صفحه محصول سایت
+            image_url = None
+            try:
+                html_res = requests.get(url, headers=HEADERS, timeout=15)
+                soup = BeautifulSoup(html_res.text, 'html.parser')
+                meta_img = soup.find('meta', property='og:image')
+                if meta_img:
+                    image_url = meta_img['content']
+            except:
+                pass
+            
+            # ارسال همراه با عکس اگر یافت شد، در غیر این صورت فقط متن
+            if image_url:
+                await context.bot.send_photo(CHANNEL_ID, photo=image_url, caption=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await context.bot.send_message(CHANNEL_ID, text=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+                
+            await wait.edit_text("✅ محصول با موفقیت در کانال منتشر شد.")
     except Exception as e: await wait.edit_text(f"❌ خطا: {e}")
 
 async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -307,7 +324,7 @@ if __name__ == '__main__':
         app = ApplicationBuilder().token(TOKEN).build()
         app.add_handler(MessageHandler(filters.REPLY & filters.Chat(int(os.getenv('ADMIN_ID', 0))), admin_reply_handler))
         app.add_handler(MessageHandler(filters.Regex("^🗂 دسته‌بندی محصولات$"), show_categories))
-        app.add_handler(MessageHandler(filters.Regex("^📞 پشتیبانی و مشاوره$"), show_support)) # هندلر دکمه پشتیبانی
+        app.add_handler(MessageHandler(filters.Regex("^📞 پشتیبانی و مشاوره$"), show_support)) 
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'جزییات سفارش شماره'), process_pasted_invoice))
         app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^https://banehstoore\.ir'), post_product))
         
