@@ -271,7 +271,7 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.close(); conn.close()
     await update.message.reply_text("✅ ارسال شد."); return ADMIN_PANEL
 
-# --- بخش ارسال محصول به کانال به روز رسانی شد ---
+# --- بخش ارسال محصول به کانال (به‌روزرسانی شده با کپشن سفارشی) ---
 async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv('ADMIN_ID'): return
     url = update.message.text.strip(); p_match = re.search(r'/product/(\d+)/', url)
@@ -281,8 +281,37 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # دریافت اطلاعات متنی و قیمتی از API
         res = requests.get(f"{SITE_URL}/api/management/v1/products/{p_id}/", headers={"Authorization": f"Api-Key {MIXIN_API_KEY}"}, timeout=15)
         if res.status_code == 200:
-            data = res.json(); name = data.get('name'); price = data.get('price')
-            caption = f"🛍 <b>{name}</b>\n💰 <b>قیمت:</b> {'{:,} تومان'.format(int(price))}\n\n✨ #بانه_استور"
+            data = res.json()
+            name = data.get('name', 'محصول نامشخص')
+            price = data.get('price', 0)
+            
+            # تلاش برای یافتن قیمت قبل در کلیدهای متداول API
+            old_price = data.get('old_price') or data.get('original_price') or data.get('regular_price')
+            
+            # تلاش برای یافتن موجودی و وضعیت
+            stock = data.get('inventory') or data.get('stock') or data.get('quantity')
+            is_available = data.get('is_available', True)
+            
+            # تنظیم متن وضعیت موجودی
+            if stock is not None and str(stock).isdigit():
+                if int(stock) > 0:
+                    status_text = f"✅ موجود ({stock} عدد)"
+                else:
+                    status_text = "❌ ناموجود"
+            else:
+                status_text = "✅ موجود" if is_available else "❌ ناموجود"
+
+            # ساخت کپشن دقیقاً طبق فرمت درخواستی شما
+            caption = f"🛍 <b>{name}</b>\n\n"
+            caption += f"💰 <b>قیمت ویژه:</b> {'{:,}'.format(int(price))} تومان\n"
+            
+            if old_price and int(old_price) > int(price):
+                caption += f"❌ <b>قیمت قبل:</b> <s>{'{:,}'.format(int(old_price))}</s> تومان\n"
+                
+            caption += f"📦 <b>وضعیت:</b> {status_text}\n\n"
+            caption += "🚚 ارسال سریع | 💎 ضمانت اصالت\n\n"
+            caption += "✨ #بانه_استور"
+
             kb = [[InlineKeyboardButton("🛒 خرید آنلاین", url=url)]]
             
             # استخراج تصویر اصلی از صفحه محصول سایت
@@ -303,6 +332,8 @@ async def post_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(CHANNEL_ID, text=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
                 
             await wait.edit_text("✅ محصول با موفقیت در کانال منتشر شد.")
+        else:
+            await wait.edit_text("❌ خطا در دریافت اطلاعات محصول از سایت.")
     except Exception as e: await wait.edit_text(f"❌ خطا: {e}")
 
 async def process_pasted_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
